@@ -1,0 +1,135 @@
+[
+  {
+    "model_name": "gemma-3-1b-it",
+    "max_input_tokens": 32768,
+    "max_output_tokens": 8192,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  },
+  {
+    "model_name": "gemma-3-4b-it",
+    "max_input_tokens": 32768,
+    "max_output_tokens": 8192,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  },
+  {
+    "model_name": "gemma-3-12b-it",
+    "max_input_tokens": 32768,
+    "max_output_tokens": 8192,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  },
+  {
+    "model_name": "gemma-3-27b-it",
+    "max_input_tokens": 131072,
+    "max_output_tokens": 8192,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  },
+  {
+    "model_name": "gemma-3n-e4b-it",
+    "max_input_tokens": 8192,
+    "max_output_tokens": 2048,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  },
+  {
+    "model_name": "gemma-3n-e2b-it",
+    "max_input_tokens": 8192,
+    "max_output_tokens": 2048,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  },
+  {
+    "model_name": "gemini-flash-latest",
+    "max_input_tokens": 1048576,
+    "max_output_tokens": 65536,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  },
+  {
+    "model_name": "gemini-flash-lite-latest",
+    "max_input_tokens": 1048576,
+    "max_output_tokens": 65536,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  },
+  {
+    "model_name": "gemini-pro-latest",
+    "max_input_tokens": 1048576,
+    "max_output_tokens": 65536,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  },
+  {
+    "model_name": "gemini-2.5-flash-lite",
+    "max_input_tokens": 1048576,
+    "max_output_tokens": 65536,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  },
+  {
+    "model_name": "gemini-2.5-flash-image",
+    "max_input_tokens": 32768,
+    "max_output_tokens": 32768,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  },
+  {
+    "model_name": "gemini-3-pro-preview",
+    "max_input_tokens": 1048576,
+    "max_output_tokens": 65536,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  },
+  {
+    "model_name": "gemini-3-flash-preview",
+    "max_input_tokens": 1048576,
+    "max_output_tokens": 65536,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  },
+  {
+    "model_name": "gemini-3.1-pro-preview",
+    "max_input_tokens": 1048576,
+    "max_output_tokens": 65536,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  },
+  {
+    "model_name": "gemini-3.1-pro-preview-customtools",
+    "max_input_tokens": 1048576,
+    "max_output_tokens": 65536,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  },
+  {
+    "model_name": "gemini-3.1-flash-lite-preview",
+    "max_input_tokens": 1048576,
+    "max_output_tokens": 65536,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  },
+  {
+    "model_name": "gemini-3-pro-image-preview",
+    "max_input_tokens": 131072,
+    "max_output_tokens": 32768,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  },
+  {
+    "model_name": "nano-banana-pro-preview",
+    "max_input_tokens": 131072,
+    "max_output_tokens": 32768,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  },
+  {
+    "model_name": "gemini-3.1-flash-image-preview",
+    "max_input_tokens": 65536,
+    "max_output_tokens": 65536,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  }
+]

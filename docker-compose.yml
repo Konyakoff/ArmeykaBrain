@@ -1,0 +1,10 @@
+version: '3.8'
+services:
+  telegram-bot:
+    build: .
+    container_name: armeykabrain_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./db:/app/db
