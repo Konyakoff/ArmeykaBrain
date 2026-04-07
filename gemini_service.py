@@ -4,7 +4,10 @@ import re
 import os
 import glob
 from data_loader import JSON_DB, GEMINI_MODELS, find_rag_context
-from styles import STYLES
+
+def get_styles():
+    with open("styles.json", "r", encoding="utf-8") as f:
+        return json.load(f)
 
 # Настройка API
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
@@ -166,7 +169,7 @@ def prepare_expert_context(top_articles: list, threshold: int = 70) -> tuple:
     combined_context = "\n\n".join(contexts) if contexts else ""
     return combined_context, used_ids
 
-async def get_expert_analysis(question: str, combined_context: str, style: str = "telegram_yur") -> tuple:
+async def get_expert_analysis(question: str, combined_context: str, style: str = "telegram_yur", max_length: int = 4000) -> tuple:
     """Шаг 2: Получаем экспертный ответ на основе подготовленного контекста."""
     model_name = "gemini-3.1-pro-preview"
     model = genai.GenerativeModel(model_name)
@@ -174,7 +177,9 @@ async def get_expert_analysis(question: str, combined_context: str, style: str =
     if not combined_context:
         return "К сожалению, не удалось найти детальный юридический контекст для выбранных статей.", None, 0, 0
         
-    system_prompt = STYLES.get(style, STYLES["telegram_yur"])
+    styles_dict = get_styles()
+    system_prompt_template = styles_dict.get(style, styles_dict.get("telegram_yur", ""))
+    system_prompt = system_prompt_template.replace("{max_length}", str(max_length))
     
     prompt = f"""{system_prompt}
 

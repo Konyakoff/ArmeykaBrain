@@ -36,12 +36,30 @@ def get_models_keyboard(user_id=None):
         if len(row) == 2:
             keyboard.append(row)
             row = []
+import json
+
+def get_styles():
+    with open("styles.json", "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def get_models_keyboard(user_id=None):
+    if str(user_id) != ADMIN_ID:
+        return ReplyKeyboardRemove()
+        
+    keyboard = []
+    # Создаем кнопки по 2 в ряд
+    row = []
+    for model in GEMINI_MODELS:
+        row.append(KeyboardButton(text=f"Модель: {model['model_name']}"))
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
     if row:
         keyboard.append(row)
         
-    from styles import STYLES
+    styles_dict = get_styles()
     style_row = []
-    for style in STYLES.keys():
+    for style in styles_dict.keys():
         style_row.append(KeyboardButton(text=f"Стиль: {style}"))
         if len(style_row) == 2:
             keyboard.append(style_row)
@@ -159,8 +177,8 @@ async def select_style(message: types.Message):
     global CURRENT_STYLE
     style_name = message.text.replace("Стиль: ", "").strip()
     
-    from styles import STYLES
-    if style_name in STYLES:
+    styles_dict = get_styles()
+    if style_name in styles_dict:
         CURRENT_STYLE = style_name
         ans = f"✅ Стиль успешно применен: <b>{style_name}</b>\n\nТеперь вы можете задать свой юридический вопрос."
         await message.answer(ans, parse_mode=ParseMode.HTML)

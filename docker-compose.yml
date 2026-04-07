@@ -1,10 +1,13 @@
 version: '3.8'
 services:
-  telegram-bot:
+  web-app:
     build: .
-    container_name: armeykabrain_bot
+    container_name: armeykabrain_web
     restart: unless-stopped
+    ports:
+      - "8000:8000"
     env_file:
       - .env
     volumes:
       - ./db:/app/db
+      - ./static:/app/static
