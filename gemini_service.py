@@ -9,6 +9,13 @@ def get_styles():
     with open("styles.json", "r", encoding="utf-8") as f:
         return json.load(f)
 
+def get_audio_prompts():
+    try:
+        with open("prompts_audio.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
 # Настройка API
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
@@ -197,3 +204,31 @@ async def get_expert_analysis(question: str, combined_context: str, style: str =
     except Exception as e:
         print(f"Error in get_expert_analysis: {e}")
         return f"Ошибка при генерации ответа: {e}", None, 0, 0, ""
+
+async def generate_audio_script(expert_answer: str, duration: int, wpm: int = 150) -> tuple:
+    """Шаг 3: Превращаем экспертный ответ в короткий текст для аудио."""
+    model_name = "gemini-3.1-pro-preview"
+    model = genai.GenerativeModel(model_name)
+    
+    if not expert_answer:
+        return "Нет текста для обработки.", None, 0, 0, ""
+        
+    prompts_dict = get_audio_prompts()
+    system_prompt_template = prompts_dict.get("default", "Произошла ошибка загрузки промпта из файла prompts_audio.json")
+    
+    words_per_second = wpm / 60.0
+    min_words = int(duration * words_per_second * 0.9)
+    max_words = int(duration * words_per_second * 1.1)
+    
+    prompt = system_prompt_template.replace("[ВСТАВИТЬ ВАШ ИСХОДНЫЙ ТЕКСТ]", expert_answer)
+    prompt = prompt.replace("[N]", str(duration))
+    prompt = prompt.replace("[N * 2]", str(min_words))
+    prompt = prompt.replace("[N * 2.5]", str(max_words))
+    
+    try:
+        response = await model.generate_content_async(prompt)
+        usage = response.usage_metadata
+        return response.text, usage, usage.prompt_token_count, usage.candidates_token_count, prompt
+    except Exception as e:
+        print(f"Error in generate_audio_script: {e}")
+        return f"Ошибка при генерации аудио сценария: {e}", None, 0, 0, ""
