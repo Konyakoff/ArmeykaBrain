@@ -1,17 +1,18 @@
 import asyncio
 import logging
 from gemini_service import get_top_ids, get_expert_analysis, generate_audio_script, calculate_cost, get_model_info, prepare_expert_context
-from elevenlabs_service import generate_audio
+from elevenlabs_service import generate_audio, get_elevenlabs_voices
 from database import save_result
 
 logger = logging.getLogger("core")
 
-async def process_query_stream(question: str, model: str, style: str, context_threshold: int, send_prompts: bool, max_length: int = 4000, tab_type: str = "text", audio_duration: int = 60, elevenlabs_model: str = "eleven_multilingual_v2", audio_wpm: int = 150, elevenlabs_voice: str = "pFZP5JQG7iQjIQuC4Bku"):
+async def process_query_logic(queue: asyncio.Queue, question: str, model: str, style: str, context_threshold: int, send_prompts: bool, max_length: int = 4000, tab_type: str = "text", audio_duration: int = 60, elevenlabs_model: str = "eleven_multilingual_v2", audio_wpm: int = 150, elevenlabs_voice: str = "pFZP5JQG7iQjIQuC4Bku", audio_style: float = 0.25, use_speaker_boost: bool = True):
     """
-    Основная логика обработки запроса к ИИ с генератором состояний (Streaming).
+    Основная логика обработки запроса к ИИ.
+    Выполняется в фоне и пишет промежуточные шаги в queue.
     """
     try:
-        yield {"step": 1, "message": "Шаг 1: Ищем подходящие статьи и анализируем запрос..."}
+        await queue.put({"step": 1, "message": "Шаг 1: Ищем подходящие статьи и анализируем запрос..."})
         top_articles, query_category, error_or_usage, in_tokens_1, out_tokens_1, prompt_step1 = await get_top_ids(question, model)
         
         if not top_articles:
@@ -20,7 +21,7 @@ async def process_query_stream(question: str, model: str, style: str, context_th
             else:
                 err_text = "❌ Модель не смогла найти подходящие статьи или вернула ответ в неверном формате."
             
-            yield {"step": "error", "message": err_text}
+            await queue.put({"step": "error", "message": err_text})
             return
             
         combined_context, used_ids = prepare_expert_context(top_articles, threshold=context_threshold)
@@ -33,9 +34,9 @@ async def process_query_stream(question: str, model: str, style: str, context_th
         step1_text += f"✅ **Найденные статьи (ТОП-15):**\n{articles_list_str}\n\n"
         step1_text += f"🔍 **Взяты в работу (id объектов >= {context_threshold}% или Топ-3):**\n{used_ids_str}\n\n"
         
-        yield {"step": "partial", "data": {"step1_info": step1_text}}
+        await queue.put({"step": "partial", "data": {"step1_info": step1_text}})
         
-        yield {"step": 2, "message": "Шаг 2: Формируем экспертное заключение..."}
+        await queue.put({"step": 2, "message": "Шаг 2: Формируем экспертное заключение..."})
         expert_answer, _, in_tokens_2, out_tokens_2, prompt_step2 = await get_expert_analysis(question, combined_context, style=style, max_length=max_length)
         
         in_cost_2, out_cost_2 = calculate_cost(in_tokens_2, out_tokens_2, "gemini-3.1-pro-preview")
@@ -48,14 +49,15 @@ async def process_query_stream(question: str, model: str, style: str, context_th
         stat_text += f"Вход: {in_tokens_2} (${in_cost_2:.3f})\n"
         stat_text += f"Выход: {out_tokens_2} (${out_cost_2:.3f})\n"
         
-        yield {"step": "partial", "data": {"answer": expert_answer}}
+        await queue.put({"step": "partial", "data": {"answer": expert_answer}})
         
         step3_audio_result = None
-        step4_audio_url = None
+        step4_audio_url_web = None
+        step4_audio_url_orig = None
         prompt_step3 = None
         
         if tab_type == "audio":
-            yield {"step": 3, "message": f"Шаг 3: Генерируем короткий аудиосценарий на {audio_duration} секунд..."}
+            await queue.put({"step": 3, "message": f"Шаг 3: Генерируем короткий аудиосценарий на {audio_duration} секунд..."})
             audio_script, _, in_tokens_3, out_tokens_3, prompt_step3 = await generate_audio_script(expert_answer, audio_duration, audio_wpm)
             in_cost_3, out_cost_3 = calculate_cost(in_tokens_3, out_tokens_3, "gemini-3.1-pro-preview")
             total_cost += in_cost_3 + out_cost_3
@@ -66,15 +68,19 @@ async def process_query_stream(question: str, model: str, style: str, context_th
             
             step3_audio_result = audio_script
             
-            yield {"step": "partial", "data": {"step3_audio": step3_audio_result}}
+            await queue.put({"step": "partial", "data": {"step3_audio": step3_audio_result}})
             
-            yield {"step": 4, "message": "Шаг 4: Синтезируем голос в ElevenLabs (может занять время)..."}
-            speed = audio_wpm / 150.0
+            await queue.put({"step": 4, "message": "Шаг 4: Синтезируем голос в ElevenLabs (может занять время)..."})
+            speed = max(0.7, min(audio_wpm / 150.0, 1.2))
+            stability = 0.5
+            similarity_boost = 0.75
+            
+            voices = await get_elevenlabs_voices()
+            voice_name = next((v['name'] for v in voices if v['voice_id'] == elevenlabs_voice), elevenlabs_voice)
+            
             try:
-                step4_audio_url = await generate_audio(step3_audio_result, elevenlabs_model, voice_id=elevenlabs_voice, speed=speed)
+                step4_audio_url_web, step4_audio_url_orig = await generate_audio(step3_audio_result, elevenlabs_model, voice_id=elevenlabs_voice, speed=speed, stability=stability, similarity_boost=similarity_boost, style=audio_style, use_speaker_boost=use_speaker_boost)
                 
-                # Подсчет стоимости ElevenLabs
-                # Creator Tier: $0.30 за 1000 символов (v2, v3). Turbo/Flash: $0.15 за 1000.
                 char_count = len(step3_audio_result)
                 if "turbo" in elevenlabs_model or "flash" in elevenlabs_model:
                     eleven_cost = (char_count / 1000) * 0.15
@@ -86,7 +92,13 @@ async def process_query_stream(question: str, model: str, style: str, context_th
                 stat_text += f"\n*Статистика 4 этапа (ElevenLabs)*\n"
                 stat_text += f"Модель: {elevenlabs_model}\n"
                 stat_text += f"Диктор ID: {elevenlabs_voice}\n"
+                stat_text += f"Диктор Имя: {voice_name}\n"
+                stat_text += f"Длительность: {audio_duration} сек\n"
                 stat_text += f"Скорость: {speed:.2f} ({audio_wpm} слов/мин)\n"
+                stat_text += f"Stability: {stability}\n"
+                stat_text += f"Similarity: {similarity_boost}\n"
+                stat_text += f"Style: {audio_style}\n"
+                stat_text += f"Speaker Boost: {'true' if use_speaker_boost else 'false'}\n"
                 stat_text += f"Символов: {char_count} (${eleven_cost:.3f})\n"
             except Exception as e:
                 logger.error(f"Ошибка генерации аудио: {e}")
@@ -97,15 +109,16 @@ async def process_query_stream(question: str, model: str, style: str, context_th
         
         final_answer = expert_answer + stat_text
         
-        yield {"step": 5, "message": "Сохраняем результаты в базу..."}
-        slug = save_result(question, step1_text, final_answer, tab_type, step3_audio_result, step4_audio_url)
+        await queue.put({"step": 5, "message": "Сохраняем результаты в базу..."})
+        slug = save_result(question, step1_text, final_answer, tab_type, step3_audio_result, step4_audio_url_web, step4_audio_url_orig)
         
         response_data = {
             "success": True,
             "step1_info": step1_text,
             "answer": final_answer,
             "step3_audio": step3_audio_result,
-            "step4_audio_url": step4_audio_url,
+            "step4_audio_url": step4_audio_url_web,
+            "step4_audio_url_original": step4_audio_url_orig,
             "slug": slug,
             "url": f"/text/{slug}" if slug else None,
             "step4_cost": eleven_cost if 'eleven_cost' in locals() else 0.0,
@@ -131,8 +144,8 @@ async def process_query_stream(question: str, model: str, style: str, context_th
             if prompt_step3:
                 response_data["prompts"]["step3"] = prompt_step3
             
-        yield {"step": "done", "result": response_data}
+        await queue.put({"step": "done", "result": response_data})
         
     except Exception as e:
-        logger.exception(f"Exception in process_query_stream for question: {question[:50]}...")
-        yield {"step": "error", "message": f"⚠️ Произошла ошибка при обработке запроса:\n{str(e)}"}
+        logger.exception(f"Exception in process_query_logic for question: {question[:50]}...")
+        await queue.put({"step": "error", "message": f"⚠️ Произошла ошибка при обработке запроса:\n{str(e)}"})

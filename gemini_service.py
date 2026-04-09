@@ -216,12 +216,23 @@ async def generate_audio_script(expert_answer: str, duration: int, wpm: int = 15
     prompts_dict = get_audio_prompts()
     system_prompt_template = prompts_dict.get("default", "Произошла ошибка загрузки промпта из файла prompts_audio.json")
     
-    words_per_second = wpm / 60.0
-    min_words = int(duration * words_per_second * 0.9)
-    max_words = int(duration * words_per_second * 1.1)
+    # ElevenLabs speed parameter has a strict range [0.7, 1.2]. 
+    # To respect duration, we must ask Gemini to generate exactly the number of words 
+    # that ElevenLabs can actually read at that speed in the given duration.
+    # Base effective speaking rate with tags and pauses is ~130 words per minute.
+    clamped_speed = max(0.7, min(wpm / 150.0, 1.2))
+    target_effective_wpm = 130.0 * clamped_speed
+    
+    words_per_second = target_effective_wpm / 60.0
+    min_words = int(duration * words_per_second * 0.85)
+    max_words = int(duration * words_per_second * 1.0)
     
     prompt = system_prompt_template.replace("[ВСТАВИТЬ ВАШ ИСХОДНЫЙ ТЕКСТ]", expert_answer)
     prompt = prompt.replace("[N]", str(duration))
+    prompt = prompt.replace("[MIN_WORDS]", str(min_words))
+    prompt = prompt.replace("[MAX_WORDS]", str(max_words))
+    
+    # Для обратной совместимости, если где-то остались старые переменные
     prompt = prompt.replace("[N * 2]", str(min_words))
     prompt = prompt.replace("[N * 2.5]", str(max_words))
     
@@ -232,3 +243,58 @@ async def generate_audio_script(expert_answer: str, duration: int, wpm: int = 15
     except Exception as e:
         print(f"Error in generate_audio_script: {e}")
         return f"Ошибка при генерации аудио сценария: {e}", None, 0, 0, ""
+
+async def evaluate_audio_quality(audio_path: str, text: str, params: dict) -> dict:
+    """Оценка качества аудио через Gemini 3.1 Pro Preview."""
+    model_name = "gemini-3.1-pro-preview"
+    model = genai.GenerativeModel(model_name)
+    
+    prompts_dict = get_audio_prompts()
+    system_prompt_template = prompts_dict.get("evaluation", "Произошла ошибка загрузки промпта оценки из файла prompts_audio.json")
+    
+    prompt = system_prompt_template.replace("[TEXT]", text)
+    prompt = prompt.replace("[MODEL]", str(params.get('model')))
+    prompt = prompt.replace("[VOICE]", str(params.get('voice')))
+    prompt = prompt.replace("[STABILITY]", str(params.get('stability')))
+    prompt = prompt.replace("[SIMILARITY]", str(params.get('similarity')))
+    prompt = prompt.replace("[STYLE]", str(params.get('style')))
+    prompt = prompt.replace("[BOOST]", str(params.get('use_speaker_boost')))
+
+    import asyncio
+    loop = asyncio.get_event_loop()
+    try:
+        # Загружаем файл
+        uploaded_file = await loop.run_in_executor(None, genai.upload_file, audio_path)
+        
+        response = await model.generate_content_async(
+            [prompt, uploaded_file],
+            generation_config=genai.types.GenerationConfig(
+                response_mime_type="application/json",
+                temperature=0.2,
+            )
+        )
+        
+        usage = response.usage_metadata
+        in_cost, out_cost = calculate_cost(usage.prompt_token_count, usage.candidates_token_count, model_name)
+        total_cost = in_cost + out_cost
+        
+        raw_response = re.sub(r'^```json\s*', '', response.text.strip())
+        raw_response = re.sub(r'\s*```$', '', raw_response)
+        data = json.loads(raw_response)
+        
+        # Защита от случая, когда ИИ вернул список вместо объекта
+        if isinstance(data, list):
+            if len(data) > 0:
+                data = data[0]
+            else:
+                data = {}
+                
+        data['cost'] = total_cost
+        
+        # Удаляем файл из Gemini
+        await loop.run_in_executor(None, genai.delete_file, uploaded_file.name)
+        
+        return data
+    except Exception as e:
+        print(f"Error in evaluate_audio_quality: {e}")
+        return {"error": str(e)}

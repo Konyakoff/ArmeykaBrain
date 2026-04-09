@@ -1,0 +1,264 @@
+/* static/css/style.css */
+body { 
+    font-family: 'Montserrat', sans-serif; 
+    background-color: #fbfaf9;
+    background-image: 
+        radial-gradient(circle at 15% 10%, rgba(244, 121, 32, 0.06) 0%, transparent 40%),
+        radial-gradient(circle at 85% 30%, rgba(244, 121, 32, 0.08) 0%, transparent 45%),
+        radial-gradient(circle at 50% 80%, rgba(244, 121, 32, 0.05) 0%, transparent 50%),
+        url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23f47920' fill-opacity='0.03' fill-rule='evenodd'%3E%3Ccircle cx='20' cy='20' r='15' opacity='0.5'/%3E%3Ccircle cx='80' cy='60' r='25' opacity='0.3'/%3E%3Cpath d='M40 80c10-5 20 15 30 0s-10-25-30-10-10 15 0 10z' opacity='0.4'/%3E%3C/g%3E%3C/svg%3E");
+    background-attachment: fixed;
+}
+
+h1, h2, h3, .heading-font {
+    font-family: 'Onest', 'Montserrat', sans-serif;
+}
+
+/* Custom Input Styles */
+select, input[type="number"], textarea {
+    background-color: #fcf6f2;
+    border-color: #f0dfd1;
+    color: #333333;
+    transition: all 0.3s ease;
+}
+
+select:focus, input[type="number"]:focus, textarea:focus {
+    outline: none;
+    border-color: #F47920;
+    box-shadow: 0 0 0 3px rgba(244, 121, 32, 0.2);
+    background-color: #fff;
+}
+
+/* Organic shape for the custom checkbox */
+.organic-checkbox {
+    appearance: none;
+    width: 24px;
+    height: 24px;
+    background-color: #fcf6f2;
+    border: 2px solid #f0dfd1;
+    border-radius: 8px;
+    cursor: pointer;
+    position: relative;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.organic-checkbox:checked {
+    background-color: transparent;
+    border-color: transparent;
+}
+
+.organic-checkbox:checked::after {
+    content: '';
+    position: absolute;
+    width: 32px;
+    height: 32px;
+    background-color: #F47920;
+    border-radius: 40% 60% 70% 30% / 40% 50% 60% 50%;
+    z-index: 0;
+    animation: morph 3s ease-in-out infinite alternate;
+}
+
+.organic-checkbox:checked::before {
+    content: '\f00c';
+    font-family: 'Font Awesome 6 Free';
+    font-weight: 900;
+    color: white;
+    font-size: 14px;
+    z-index: 1;
+}
+
+@keyframes morph {
+    0% { border-radius: 40% 60% 70% 30% / 40% 50% 60% 50%; }
+    34% { border-radius: 70% 30% 50% 50% / 30% 30% 70% 70%; }
+    67% { border-radius: 100% 60% 60% 100% / 100% 100% 60% 60%; }
+    100% { border-radius: 40% 60% 70% 30% / 40% 50% 60% 50%; }
+}
+
+/* Organic Button */
+.btn-organic {
+    border-radius: 12px;
+    position: relative;
+    overflow: hidden;
+    z-index: 1;
+}
+
+.btn-organic::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: linear-gradient(135deg, #F47920, #e0681b);
+    z-index: -1;
+    transition: opacity 0.3s ease;
+}
+
+.btn-organic:hover::before {
+    opacity: 0.9;
+}
+
+/* Tooltips using Tailwind classes (hover handles visibility) */
+/* Emptying these as we rely on Tailwind classes like group-hover:opacity-100 now */
+.splatter-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background-color: #F47920;
+    color: white;
+    border-radius: 40% 60% 70% 30% / 40% 50% 60% 50%;
+    font-size: 12px;
+}
+
+.splatter-icon-outline {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: 2px dashed #F47920;
+    color: #F47920;
+    border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%;
+    font-size: 12px;
+}
+
+textarea::-webkit-scrollbar { width: 8px; }
+textarea::-webkit-scrollbar-track { background: transparent; }
+textarea::-webkit-scrollbar-thumb { background: #f0dfd1; border-radius: 4px; }
+textarea::-webkit-scrollbar-thumb:hover { background: #F47920; }
+
+/* General Markdown Styles */
+.markdown-body h1, .markdown-body h2, .markdown-body h3 { 
+    color: #333333; 
+    font-weight: 800; 
+    font-family: 'Onest', sans-serif;
+    margin-top: 1.75em; 
+    margin-bottom: 0.75em; 
+    line-height: 1.3;
+}
+.markdown-body h1 { font-size: 1.5em; }
+.markdown-body h2 { font-size: 1.25em; }
+.markdown-body h3 { font-size: 1.1em; }
+.markdown-body p { margin-bottom: 1em; }
+.markdown-body ul { list-style-type: none; margin-left: 0; margin-bottom: 1em; padding-left: 0; }
+.markdown-body ul li { 
+    position: relative; 
+    padding-left: 1.5em; 
+    margin-bottom: 0.5em; 
+}
+.markdown-body ul li::before {
+    content: '•';
+    color: #F47920;
+    font-weight: bold;
+    position: absolute;
+    left: 0;
+    font-size: 1.2em;
+    line-height: 1;
+}
+.markdown-body ol { list-style-type: decimal; margin-left: 1.5em; margin-bottom: 1em; }
+.markdown-body li { margin-bottom: 0.35em; }
+.markdown-body strong { font-weight: 700; color: #333333; }
+.markdown-body em { font-style: italic; }
+.markdown-body blockquote { 
+    border: 2px solid #f0dfd1;
+    background-color: #fcf6f2;
+    padding: 1.25em 1.5em; 
+    color: #555555; 
+    border-radius: 12px;
+    margin-top: 1.5em;
+    margin-bottom: 1.5em; 
+    font-style: normal;
+    position: relative;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.02);
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+.markdown-body blockquote p {
+    margin-bottom: 0;
+    line-height: 1.6;
+}
+.markdown-body blockquote p:not(:last-child) {
+    margin-bottom: 0.75em;
+}
+.markdown-body blockquote::before {
+    content: '';
+    position: absolute;
+    left: -2px;
+    top: 20px;
+    bottom: 20px;
+    width: 4px;
+    background-color: #F47920;
+    border-radius: 0 4px 4px 0;
+}
+
+.markdown-body pre {
+    border: 2px solid #f0dfd1;
+    background-color: #fcf6f2;
+    padding: 1.25em 1.5em; 
+    color: #555555; 
+    border-radius: 12px;
+    margin-top: 1.75em;
+    margin-bottom: 1.75em; 
+    position: relative;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.02);
+    white-space: pre-wrap; 
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    font-family: inherit; 
+    line-height: 1.6;
+}
+.markdown-body pre::before {
+    content: '';
+    position: absolute;
+    left: -2px;
+    top: 20px;
+    bottom: 20px;
+    width: 4px;
+    background-color: #F47920;
+    border-radius: 0 4px 4px 0;
+}
+.markdown-body pre code {
+    font-family: inherit; 
+    background: transparent;
+    padding: 0;
+    white-space: pre-wrap;
+    color: inherit;
+}
+.markdown-body p code {
+    background-color: #fcf6f2;
+    color: #d46b08;
+    padding: 0.2em 0.4em;
+    border-radius: 0.25rem;
+    font-family: inherit;
+    font-weight: 600;
+}
+
+.markdown-body a { color: #F47920; text-decoration: underline; text-underline-offset: 2px; font-weight: 500; }
+.markdown-body a:hover { color: #d96a1a; }
+
+.step1-body p { margin-bottom: 1.25rem; }
+.step1-body strong { color: #333333; font-weight: 700; }
+
+.select-arrow {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%23F47920' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M5 8l5 5 5-5'/%3e%3c/svg%3e");
+    background-position: right 1rem center;
+    background-repeat: no-repeat;
+    background-size: 1.5em 1.5em;
+    padding-right: 2.5rem;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+}
+
+.decorative-blob {
+    position: absolute;
+    width: 60px;
+    height: 60px;
+    background-color: #F47920;
+    border-radius: 40% 60% 70% 30% / 40% 50% 60% 50%;
+    z-index: -1;
+    opacity: 0.1;
+}
+

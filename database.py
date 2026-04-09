@@ -52,7 +52,17 @@ def init_db():
         pass
         
     try:
+        cursor.execute("ALTER TABLE saved_results ADD COLUMN step4_audio_url_original TEXT")
+    except sqlite3.OperationalError:
+        pass
+        
+    try:
         cursor.execute("ALTER TABLE saved_results ADD COLUMN additional_audios TEXT DEFAULT '[]'")
+    except sqlite3.OperationalError:
+        pass
+        
+    try:
+        cursor.execute("ALTER TABLE saved_results ADD COLUMN evaluation_main TEXT")
     except sqlite3.OperationalError:
         pass
         
@@ -74,7 +84,7 @@ def log_message(user_id: int, username: str, direction: str, text: str):
     except Exception as e:
         print(f"Error logging message: {e}")
 
-def save_result(question: str, step1_info: str, answer: str, tab_type: str = 'text', step3_audio: str = None, step4_audio_url: str = None) -> str:
+def save_result(question: str, step1_info: str, answer: str, tab_type: str = 'text', step3_audio: str = None, step4_audio_url: str = None, step4_audio_url_original: str = None) -> str:
     """Сохраняет результат и генерирует уникальный slug (YYMMDD-XXXXX)."""
     try:
         now = datetime.now()
@@ -92,9 +102,9 @@ def save_result(question: str, step1_info: str, answer: str, tab_type: str = 'te
         slug = f"{date_prefix}-{(count_today + 1):05d}"
         
         cursor.execute("""
-            INSERT INTO saved_results (slug, question, step1_info, answer, timestamp, char_count, tab_type, step3_audio, step4_audio_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (slug, question, step1_info, answer, timestamp_str, char_count, tab_type, step3_audio, step4_audio_url))
+            INSERT INTO saved_results (slug, question, step1_info, answer, timestamp, char_count, tab_type, step3_audio, step4_audio_url, step4_audio_url_original)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (slug, question, step1_info, answer, timestamp_str, char_count, tab_type, step3_audio, step4_audio_url, step4_audio_url_original))
         
         conn.commit()
         conn.close()
@@ -121,6 +131,13 @@ def get_result_by_slug(slug: str) -> dict:
                     res_dict["additional_audios_list"] = []
             else:
                 res_dict["additional_audios_list"] = []
+                
+            if "evaluation_main" in res_dict and res_dict["evaluation_main"]:
+                try:
+                    res_dict["evaluation_main"] = json.loads(res_dict["evaluation_main"])
+                except:
+                    pass
+                    
             return res_dict
         return None
     except Exception as e:
@@ -156,6 +173,51 @@ def add_additional_audio(slug: str, audio_data: dict) -> bool:
         return True
     except Exception as e:
         print(f"Error adding additional audio: {e}")
+        return False
+
+def save_main_evaluation(slug: str, eval_data: dict) -> bool:
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE saved_results SET evaluation_main = ? WHERE slug = ?", (json.dumps(eval_data, ensure_ascii=False), slug))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error saving main evaluation: {e}")
+        return False
+
+def save_additional_evaluation(slug: str, audio_url: str, eval_data: dict) -> bool:
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT additional_audios FROM saved_results WHERE slug = ?", (slug,))
+        row = cursor.fetchone()
+        if not row or not row[0]:
+            conn.close()
+            return False
+            
+        try:
+            current_list = json.loads(row[0])
+        except:
+            current_list = []
+            
+        # Find the specific audio by url and update it
+        updated = False
+        for item in current_list:
+            if item.get("audio_url") == audio_url or item.get("audio_url", "").endswith(audio_url):
+                item["evaluation"] = eval_data
+                updated = True
+                break
+                
+        if updated:
+            cursor.execute("UPDATE saved_results SET additional_audios = ? WHERE slug = ?", (json.dumps(current_list, ensure_ascii=False), slug))
+            conn.commit()
+            
+        conn.close()
+        return updated
+    except Exception as e:
+        print(f"Error saving additional evaluation: {e}")
         return False
 
 def get_recent_results(limit: int = 50, tab_type: str = 'text') -> list:
