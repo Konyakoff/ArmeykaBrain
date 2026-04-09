@@ -2,6 +2,7 @@ import os
 import aiohttp
 import uuid
 import subprocess
+from app.core.config import settings
 
 # Кэш для голосов, чтобы не запрашивать их каждый раз
 _voices_cache = []
@@ -117,7 +118,7 @@ async def get_elevenlabs_voices() -> list:
     if _voices_cache:
         return _voices_cache
         
-    api_key = os.getenv("ELEVENLABS_API_KEY")
+    api_key = settings.elevenlabs_api_key
     if not api_key:
         return []
         
@@ -171,7 +172,7 @@ async def generate_audio(text: str, model_id: str, voice_id: str = "pFZP5JQG7iQj
     Генерирует аудио из текста с помощью ElevenLabs API и сохраняет в файл.
     Возвращает кортеж (URL_web_версии, URL_оригинальной_версии).
     """
-    api_key = os.getenv("ELEVENLABS_API_KEY")
+    api_key = settings.elevenlabs_api_key
     if not api_key:
         raise ValueError("ELEVENLABS_API_KEY не установлен в .env")
         
