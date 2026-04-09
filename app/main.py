@@ -1,14 +1,14 @@
 import os
 import asyncio
 import logging
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, HTMLResponse
+import json
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import Request
 from pydantic import BaseModel, Field
-from dotenv import load_dotenv
+from sse_starlette.sse import EventSourceResponse
 
 # Настраиваем логирование в файл (и в консоль)
 logging.basicConfig(
@@ -21,19 +21,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger("api")
 
-# Загружаем переменные окружения ДО импорта остальных модулей
-load_dotenv()
-
-from data_loader import GEMINI_MODELS
-from database import init_db, get_db_path, log_message, get_recent_results, get_result_by_slug, add_additional_audio, save_main_evaluation, save_additional_evaluation
-from core import process_query_logic
-from elevenlabs_service import generate_audio, get_elevenlabs_voices
-from gemini_service import evaluate_audio_quality
+from app.core.config import settings
+from app.core.exceptions import APIError, NotFoundError, ExternalAPIError, api_error_handler, global_exception_handler
+from app.services.data_loader import GEMINI_MODELS
+from app.db.database import init_db, get_db_path, log_message, get_recent_results, get_result_by_slug, add_additional_audio, save_main_evaluation, save_additional_evaluation
+from app.services.core import process_query_logic
+from app.services.elevenlabs_service import generate_audio, get_elevenlabs_voices
+from app.services.gemini_service import evaluate_audio_quality
 
 # Глобальный сет для жестких ссылок на фоновые задачи (чтобы их не удалял GC)
 background_tasks = set()
 
 app = FastAPI(title="ArmeykaBrain API")
+
+app.add_exception_handler(APIError, api_error_handler)
+app.add_exception_handler(Exception, global_exception_handler)
 
 # Настройка CORS, если фронтенд будет на другом домене (в нашем случае все на одном, но для безопасности)
 app.add_middleware(
@@ -99,18 +101,14 @@ async def read_index(request: Request):
     # Возвращаем шаблон index.html
     return templates.TemplateResponse(request=request, name="index.html")
 
-import json
-
-def get_styles():
-    with open("styles.json", "r", encoding="utf-8") as f:
-        return json.load(f)
+from app.core.prompt_manager import PromptManager
 
 @app.get("/api/config")
 async def get_config():
     """
     Возвращает доступные модели и стили для заполнения селектов на фронтенде
     """
-    styles_data = get_styles()
+    styles_data = PromptManager.get_styles()
     models = [{"id": m["model_name"], "name": m["model_name"]} for m in GEMINI_MODELS]
     styles = [{"id": s, "name": s} for s in styles_data.keys()]
     voices = await get_elevenlabs_voices()
@@ -167,23 +165,22 @@ async def process_user_query(req: QueryRequest):
                 if chunk.get("step") == "done":
                     log_message("web_user", "web_interface", "out", chunk["result"]["answer"])
                     logger.info("Запрос успешно обработан")
-                    yield json.dumps(chunk, ensure_ascii=False) + "\n"
+                    yield {"data": json.dumps(chunk, ensure_ascii=False)}
                     break
                 elif chunk.get("step") == "error":
                     log_message("web_user", "web_interface", "out", chunk["message"])
                     logger.error(f"Ошибка при обработке: {chunk['message']}")
-                    yield json.dumps(chunk, ensure_ascii=False) + "\n"
+                    yield {"data": json.dumps(chunk, ensure_ascii=False)}
                     break
                     
-                yield json.dumps(chunk, ensure_ascii=False) + "\n"
+                yield {"data": json.dumps(chunk, ensure_ascii=False)}
         except asyncio.CancelledError:
             logger.info("Клиент отключился, но фоновая генерация продолжается.")
-            # We don't cancel the background task
         except Exception as e:
             logger.exception("Непредвиденная ошибка генератора")
-            yield json.dumps({"step": "error", "message": f"Внутренняя ошибка: {str(e)}"}, ensure_ascii=False) + "\n"
+            yield {"data": json.dumps({"step": "error", "message": f"Внутренняя ошибка: {str(e)}"}, ensure_ascii=False)}
 
-    return StreamingResponse(generator(), media_type="application/x-ndjson")
+    return EventSourceResponse(generator())
 
 @app.post("/api/generate_audio_only")
 async def process_generate_audio_only(req: AudioRequest):
@@ -242,9 +239,11 @@ async def process_generate_audio_only(req: AudioRequest):
             "use_speaker_boost": req.use_speaker_boost,
             "cost": eleven_cost
         }
+    except APIError:
+        raise
     except Exception as e:
         logger.exception("Ошибка при генерации дополнительного аудио")
-        raise HTTPException(status_code=500, detail=f"Ошибка генерации аудио: {str(e)}")
+        raise ExternalAPIError(message=f"Ошибка генерации аудио: {str(e)}", service_name="ElevenLabs")
 
 @app.post("/api/evaluate_audio")
 async def evaluate_audio(req: EvaluateRequest):
@@ -254,7 +253,7 @@ async def evaluate_audio(req: EvaluateRequest):
     try:
         audio_path = req.audio_url.lstrip("/")
         if not os.path.exists(audio_path):
-            raise HTTPException(status_code=404, detail="Файл аудио не найден на сервере")
+            raise NotFoundError("Файл аудио не найден на сервере")
             
         params = {
             "model": req.elevenlabs_model,
@@ -267,7 +266,7 @@ async def evaluate_audio(req: EvaluateRequest):
         
         result = await evaluate_audio_quality(audio_path, req.text, params)
         if "error" in result:
-            raise HTTPException(status_code=500, detail=result["error"])
+            raise ExternalAPIError(message=result["error"], service_name="Gemini")
             
         if req.slug:
             if req.is_main:
@@ -276,9 +275,11 @@ async def evaluate_audio(req: EvaluateRequest):
                 save_additional_evaluation(req.slug, req.audio_url, result)
                 
         return result
+    except APIError:
+        raise
     except Exception as e:
         logger.exception("Ошибка при оценке качества аудио")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise ExternalAPIError(message=str(e), service_name="Gemini")
 
 @app.get("/api/db/download")
 async def download_db():
@@ -293,7 +294,7 @@ async def download_db():
             media_type="application/octet-stream"
         )
     else:
-        raise HTTPException(status_code=404, detail="База данных не найдена")
+        raise NotFoundError("База данных не найдена")
 
 @app.get("/api/history")
 async def get_history(tab: str = "text"):
@@ -310,7 +311,7 @@ async def get_result_api(slug: str):
     res = get_result_by_slug(slug)
     if res:
         return res
-    raise HTTPException(status_code=404, detail="Результат не найден")
+    raise NotFoundError("Результат не найден")
 
 @app.get("/text/{slug}", response_class=HTMLResponse)
 async def view_result_page(request: Request, slug: str):

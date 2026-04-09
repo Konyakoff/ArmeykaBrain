@@ -1,8 +1,8 @@
 import asyncio
 import logging
-from gemini_service import get_top_ids, get_expert_analysis, generate_audio_script, calculate_cost, get_model_info, prepare_expert_context
-from elevenlabs_service import generate_audio, get_elevenlabs_voices
-from database import save_result
+from app.services.gemini_service import get_top_ids, get_expert_analysis, generate_audio_script, calculate_cost, get_model_info, prepare_expert_context
+from app.services.elevenlabs_service import generate_audio, get_elevenlabs_voices
+from app.db.database import save_result
 
 logger = logging.getLogger("core")
 
@@ -13,43 +13,46 @@ async def process_query_logic(queue: asyncio.Queue, question: str, model: str, s
     """
     try:
         await queue.put({"step": 1, "message": "Шаг 1: Ищем подходящие статьи и анализируем запрос..."})
-        top_articles, query_category, error_or_usage, in_tokens_1, out_tokens_1, prompt_step1 = await get_top_ids(question, model)
+        step1 = await get_top_ids(question, model)
         
-        if not top_articles:
-            if isinstance(error_or_usage, str):
-                err_text = f"❌ Ошибка при поиске статей (сбой API или модель недоступна):\n{error_or_usage}"
+        if not step1.articles:
+            if step1.error:
+                err_text = f"❌ Ошибка при поиске статей (сбой API или модель недоступна):\n{step1.error}"
             else:
                 err_text = "❌ Модель не смогла найти подходящие статьи или вернула ответ в неверном формате."
             
             await queue.put({"step": "error", "message": err_text})
             return
             
-        combined_context, used_ids = prepare_expert_context(top_articles, threshold=context_threshold)
-        in_cost_1, out_cost_1 = calculate_cost(in_tokens_1, out_tokens_1, model)
+        combined_context, used_ids = prepare_expert_context(step1.articles, threshold=context_threshold)
+        in_cost_1, out_cost_1 = calculate_cost(step1.in_tokens, step1.out_tokens, model)
         
-        articles_list_str = "\n".join([f"Статья/Пункт {a['item_number']} - {a['file_name']} - {a['percent']}%" for a in top_articles])
-        used_ids_str = "\n".join([f"• {uid}" for uid in used_ids]) if used_ids else "Нет данных"
+        step1_data = {
+            "query_category": step1.query_category,
+            "articles": [{"file_name": a.file_name, "item_number": a.item_number, "percent": a.percent} for a in step1.articles],
+            "used_ids": used_ids if used_ids else []
+        }
         
-        step1_text = f"🗂 **Классификация вопроса:** {query_category}\n\n"
-        step1_text += f"✅ **Найденные статьи (ТОП-15):**\n{articles_list_str}\n\n"
-        step1_text += f"🔍 **Взяты в работу (id объектов >= {context_threshold}% или Топ-3):**\n{used_ids_str}\n\n"
+        step1_text = f"🗂 **Классификация вопроса:** {step1.query_category}\n\n"
+        step1_text += f"✅ **Найденные статьи (ТОП-15):**\n" + "\n".join([f"Статья/Пункт {a.item_number} - {a.file_name} - {a.percent}%" for a in step1.articles]) + "\n\n"
+        step1_text += f"🔍 **Взяты в работу (id объектов >= {context_threshold}% или Топ-3):**\n" + ("\n".join([f"• {uid}" for uid in used_ids]) if used_ids else "Нет данных") + "\n\n"
         
-        await queue.put({"step": "partial", "data": {"step1_info": step1_text}})
+        await queue.put({"step": "partial", "data": {"step1_info": step1_data}})
         
         await queue.put({"step": 2, "message": "Шаг 2: Формируем экспертное заключение..."})
-        expert_answer, _, in_tokens_2, out_tokens_2, prompt_step2 = await get_expert_analysis(question, combined_context, style=style, max_length=max_length)
+        step2 = await get_expert_analysis(question, combined_context, style=style, max_length=max_length)
         
-        in_cost_2, out_cost_2 = calculate_cost(in_tokens_2, out_tokens_2, "gemini-3.1-pro-preview")
+        in_cost_2, out_cost_2 = calculate_cost(step2.in_tokens, step2.out_tokens, "gemini-3.1-pro-preview")
         total_cost = in_cost_1 + out_cost_1 + in_cost_2 + out_cost_2
         
         stat_text = f"\n\n---\n*Статистика 1 этапа ({model})*\n"
-        stat_text += f"Вход: {in_tokens_1} (${in_cost_1:.3f})\n"
-        stat_text += f"Выход: {out_tokens_1} (${out_cost_1:.3f})\n\n"
+        stat_text += f"Вход: {step1.in_tokens} (${in_cost_1:.3f})\n"
+        stat_text += f"Выход: {step1.out_tokens} (${out_cost_1:.3f})\n\n"
         stat_text += f"*Статистика 2 этапа (gemini-3.1-pro-preview)*\n"
-        stat_text += f"Вход: {in_tokens_2} (${in_cost_2:.3f})\n"
-        stat_text += f"Выход: {out_tokens_2} (${out_cost_2:.3f})\n"
+        stat_text += f"Вход: {step2.in_tokens} (${in_cost_2:.3f})\n"
+        stat_text += f"Выход: {step2.out_tokens} (${out_cost_2:.3f})\n"
         
-        await queue.put({"step": "partial", "data": {"answer": expert_answer}})
+        await queue.put({"step": "partial", "data": {"answer": step2.answer}})
         
         step3_audio_result = None
         step4_audio_url_web = None
@@ -58,15 +61,16 @@ async def process_query_logic(queue: asyncio.Queue, question: str, model: str, s
         
         if tab_type == "audio":
             await queue.put({"step": 3, "message": f"Шаг 3: Генерируем короткий аудиосценарий на {audio_duration} секунд..."})
-            audio_script, _, in_tokens_3, out_tokens_3, prompt_step3 = await generate_audio_script(expert_answer, audio_duration, audio_wpm)
-            in_cost_3, out_cost_3 = calculate_cost(in_tokens_3, out_tokens_3, "gemini-3.1-pro-preview")
+            step3 = await generate_audio_script(step2.answer, audio_duration, audio_wpm)
+            in_cost_3, out_cost_3 = calculate_cost(step3.in_tokens, step3.out_tokens, "gemini-3.1-pro-preview")
             total_cost += in_cost_3 + out_cost_3
             
             stat_text += f"\n*Статистика 3 этапа (генерация аудио-скрипта)*\n"
-            stat_text += f"Вход: {in_tokens_3} (${in_cost_3:.3f})\n"
-            stat_text += f"Выход: {out_tokens_3} (${out_cost_3:.3f})\n"
+            stat_text += f"Вход: {step3.in_tokens} (${in_cost_3:.3f})\n"
+            stat_text += f"Выход: {step3.out_tokens} (${out_cost_3:.3f})\n"
             
-            step3_audio_result = audio_script
+            step3_audio_result = step3.script
+            prompt_step3 = step3.prompt
             
             await queue.put({"step": "partial", "data": {"step3_audio": step3_audio_result}})
             
@@ -107,7 +111,7 @@ async def process_query_logic(queue: asyncio.Queue, question: str, model: str, s
             
         stat_text += f"**Общая цена ИИ-вычислений: ${total_cost:.3f}**\n---"
         
-        final_answer = expert_answer + stat_text
+        final_answer = step2.answer + stat_text
         
         await queue.put({"step": 5, "message": "Сохраняем результаты в базу..."})
         slug = save_result(question, step1_text, final_answer, tab_type, step3_audio_result, step4_audio_url_web, step4_audio_url_orig)
@@ -123,12 +127,12 @@ async def process_query_logic(queue: asyncio.Queue, question: str, model: str, s
             "url": f"/text/{slug}" if slug else None,
             "step4_cost": eleven_cost if 'eleven_cost' in locals() else 0.0,
             "stats": {
-                "in_tokens_1": in_tokens_1,
-                "out_tokens_1": out_tokens_1,
+                "in_tokens_1": step1.in_tokens,
+                "out_tokens_1": step1.out_tokens,
                 "in_cost_1": in_cost_1,
                 "out_cost_1": out_cost_1,
-                "in_tokens_2": in_tokens_2,
-                "out_tokens_2": out_tokens_2,
+                "in_tokens_2": step2.in_tokens,
+                "out_tokens_2": step2.out_tokens,
                 "in_cost_2": in_cost_2,
                 "out_cost_2": out_cost_2,
                 "total_cost": total_cost
@@ -138,8 +142,8 @@ async def process_query_logic(queue: asyncio.Queue, question: str, model: str, s
         
         if send_prompts:
             response_data["prompts"] = {
-                "step1": prompt_step1,
-                "step2": prompt_step2
+                "step1": step1.prompt,
+                "step2": step2.prompt
             }
             if prompt_step3:
                 response_data["prompts"]["step3"] = prompt_step3

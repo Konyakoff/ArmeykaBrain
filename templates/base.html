@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}ArmeykaBrain - ИИ Юрист{% endblock %}</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
     
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -59,9 +60,7 @@
             <div class="mb-6 md:mb-0">
                 <a href="/" class="text-4xl sm:text-5xl font-black text-brand-dark tracking-tighter uppercase flex items-center flex-wrap gap-2 hover:opacity-90 transition-opacity">
                     АРМЕЙКА
-                    <svg class="w-8 h-8 text-brand-main animate-[spin_10s_linear_infinite]" viewBox="0 0 100 100" fill="currentColor">
-                        <path d="M50 0 L58 35 L95 25 L65 50 L95 75 L58 65 L50 100 L42 65 L5 75 L35 50 L5 25 L42 35 Z" />
-                    </svg>
+                    <img src="/static/img/star_rounded.png" alt="*" class="w-8 h-8 sm:w-10 sm:h-10 animate-[pulse_2s_ease-in-out_infinite]" />
                     NET <span class="normal-case text-3xl sm:text-4xl ml-1 text-gray-700">Brain</span>
                 </a>
                 <p class="text-gray-500 text-base sm:text-lg mt-2 font-medium tracking-wide">{% block subtitle %}ИИ-юрист эксперт в области военного права{% endblock %}</p>

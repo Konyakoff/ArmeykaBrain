@@ -1,19 +1,54 @@
 /* static/js/ui.js */
 marked.use({ breaks: true });
 
-function formatStep1Info(text) {
-    let formatted = text.replace(/🗂/g, '<div class="inline-flex items-center justify-center w-8 h-8 bg-blue-50 text-blue-500 rounded-[40%_60%_70%_30%/40%_50%_60%_50%] mr-3 mb-1"><i class="fas fa-folder-open text-xs"></i></div>');
-    formatted = formatted.replace(/✅/g, '<div class="inline-flex items-center justify-center w-8 h-8 bg-green-50 text-green-500 rounded-[60%_40%_30%_70%/60%_30%_70%_40%] mr-3 mb-1"><i class="fas fa-check text-xs"></i></div>');
-    formatted = formatted.replace(/🔍/g, '<div class="inline-flex items-center justify-center w-8 h-8 bg-purple-50 text-purple-500 rounded-[50%_50%_20%_80%/25%_25%_75%_75%] mr-3 mb-1"><i class="fas fa-search text-xs"></i></div>');
+function formatStep1Info(data) {
+    if (!data || typeof data === 'string') return marked.parse(data); // Fallback for old history data
     
-    formatted = formatted.replace(/\*\*(Классификация.*?)\*\*/g, '<strong class="text-brand-dark tracking-wide uppercase text-sm">$1</strong>');
-    formatted = formatted.replace(/\*\*(Найденные.*?)\*\*/g, '<strong class="text-brand-dark tracking-wide uppercase text-sm">$1</strong>');
-    formatted = formatted.replace(/\*\*(Взяты.*?)\*\*/g, '<strong class="text-brand-dark tracking-wide uppercase text-sm">$1</strong>');
+    let html = '';
     
-    formatted = formatted.replace(/^(Статья\/Пункт.*)$/gm, '<div class="text-sm text-gray-500 bg-gray-50/50 p-2 px-3 rounded-lg mb-2 border border-gray-100 flex items-center before:content-[\'📄\'] before:mr-2">$1</div>');
-    formatted = formatted.replace(/^(•.*)$/gm, '<div class="text-sm font-medium text-brand-main bg-brand-lightBg p-2 px-3 rounded-lg inline-block mb-2 mr-2 border border-brand-inputBorder">$1</div>');
-    
-    return marked.parse(formatted);
+    // Category
+    html += `
+        <div class="mb-4">
+            <strong class="text-brand-dark tracking-wide uppercase text-sm flex items-center mb-2">
+                <div class="inline-flex items-center justify-center w-8 h-8 bg-blue-50 text-blue-500 rounded-[40%_60%_70%_30%/40%_50%_60%_50%] mr-3 mb-1"><i class="fas fa-folder-open text-xs"></i></div>
+                Классификация вопроса: ${data.query_category}
+            </strong>
+        </div>
+    `;
+
+    // Articles
+    if (data.articles && data.articles.length > 0) {
+        html += `
+            <div class="mb-4">
+                <strong class="text-brand-dark tracking-wide uppercase text-sm flex items-center mb-2">
+                    <div class="inline-flex items-center justify-center w-8 h-8 bg-green-50 text-green-500 rounded-[60%_40%_30%_70%/60%_30%_70%_40%] mr-3 mb-1"><i class="fas fa-check text-xs"></i></div>
+                    Найденные статьи (ТОП-15):
+                </strong>
+                <div class="flex flex-col gap-2">
+        `;
+        data.articles.forEach(a => {
+            html += `<div class="text-sm text-gray-500 bg-gray-50/50 p-2 px-3 rounded-lg border border-gray-100 flex items-center before:content-['📄'] before:mr-2">Статья/Пункт ${a.item_number} - ${a.file_name} - ${a.percent}%</div>`;
+        });
+        html += `</div></div>`;
+    }
+
+    // Used IDs
+    if (data.used_ids && data.used_ids.length > 0) {
+        html += `
+            <div class="mb-4">
+                <strong class="text-brand-dark tracking-wide uppercase text-sm flex items-center mb-2">
+                    <div class="inline-flex items-center justify-center w-8 h-8 bg-purple-50 text-purple-500 rounded-[50%_50%_20%_80%/25%_25%_75%_75%] mr-3 mb-1"><i class="fas fa-search text-xs"></i></div>
+                    Взяты в работу:
+                </strong>
+                <div class="flex flex-wrap gap-2">
+        `;
+        data.used_ids.forEach(uid => {
+            html += `<div class="text-sm font-medium text-brand-main bg-brand-lightBg p-2 px-3 rounded-lg border border-brand-inputBorder">#${uid}</div>`;
+        });
+        html += `</div></div>`;
+    }
+
+    return html;
 }
 
 function toggleTooltip(id) {

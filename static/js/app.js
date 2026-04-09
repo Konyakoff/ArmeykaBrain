@@ -267,13 +267,17 @@ async function sendQuery() {
             let err = "Произошла ошибка сервера";
             try {
                 const errData = await response.json();
-                err = errData.detail || err;
+                err = errData.detail || errData.error || err;
             } catch(e) {}
             throw new Error(err);
         }
 
+        // We will use standard Fetch API to read the stream, but process it cleanly.
+        // Even simpler: since EventSource doesn't support POST with body easily, 
+        // we can fetch and read it properly by splitting chunks on '\n\n'
+        
         const reader = response.body.getReader();
-        const decoder = new TextDecoder();
+        const decoder = new TextDecoder('utf-8');
         let buffer = "";
         let finalData = null;
 
@@ -282,51 +286,81 @@ async function sendQuery() {
             if (done) break;
             
             buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop();
             
-            for (const line of lines) {
-                if (!line.trim()) continue;
-                try {
-                    const chunk = JSON.parse(line);
-                    if (chunk.step === "error") {
-                        throw new Error(chunk.message);
-                    } else if (chunk.step === "done") {
-                        finalData = chunk.result;
-                    } else if (chunk.step === "partial") {
-                        loadingState.classList.add('hidden');
-                        successState.classList.remove('hidden');
-                        successState.classList.add('flex');
-                        
-                        const data = chunk.data;
-                        if (data.step1_info) {
-                            document.getElementById('step1-info').innerHTML = formatStep1Info(data.step1_info);
-                            document.getElementById('card-step1').classList.remove('hidden');
-                        }
-                        if (data.answer) {
-                            document.getElementById('final-answer').innerHTML = marked.parse(data.answer);
-                            document.getElementById('card-step2').classList.remove('hidden');
-                        }
-                        if (data.step3_audio) {
-                            document.getElementById('step3-audio-text').innerHTML = marked.parse(data.step3_audio);
-                            document.getElementById('step3-audio-container').classList.remove('hidden');
-                            
-                            const audioDuration = document.getElementById('audio-duration').value;
-                            const audioWpm = document.getElementById('audio-wpm').value;
-                            document.getElementById('step3-param-duration').textContent = audioDuration;
-                            document.getElementById('step3-param-wpm').textContent = audioWpm;
-                            document.getElementById('step3-audio-params').classList.remove('hidden');
-                        }
-                    } else {
-                        document.getElementById('loading-desc').innerHTML = chunk.message;
-                        const floatingLoader = document.getElementById('floating-loader-text');
-                        if (floatingLoader) {
-                            floatingLoader.innerHTML = chunk.message;
-                            document.getElementById('floating-loader').classList.remove('hidden');
+            const parts = buffer.split(/\r?\n\r?\n/);
+            buffer = parts.pop(); 
+            
+            for (const part of parts) {
+                if (!part.trim()) continue;
+                
+                const lines = part.split(/\r?\n/);
+                let jsonData = null;
+                for (const line of lines) {
+                    if (line.startsWith('data:')) {
+                        try {
+                            // Extract JSON data after "data:" (allowing optional space)
+                            const jsonStr = line.substring(line.indexOf(':') + 1).trim();
+                            jsonData = JSON.parse(jsonStr);
+                        } catch (e) {
+                            console.error('Failed to parse SSE data', line);
                         }
                     }
-                } catch(err) {
-                    if (err.message !== "Unexpected end of JSON input") throw err;
+                }
+                
+                if (!jsonData) continue;
+                
+                const chunk = jsonData;
+                
+                if (chunk.step === "error") {
+                    throw new Error(chunk.message);
+                } else if (chunk.step === "done") {
+                    finalData = chunk.result;
+                } else if (chunk.step === "partial") {
+                    loadingState.classList.add('hidden');
+                    successState.classList.remove('hidden');
+                    successState.classList.add('flex');
+                    
+                    const data = chunk.data;
+                    if (data.step1_info) {
+                        document.getElementById('step1-info').innerHTML = formatStep1Info(data.step1_info);
+                        document.getElementById('card-step1').classList.remove('hidden');
+                    }
+                    if (data.answer) {
+                        document.getElementById('final-answer').innerHTML = marked.parse(data.answer);
+                        document.getElementById('card-step2').classList.remove('hidden');
+                    }
+                    if (data.step3_audio) {
+                        document.getElementById('step3-audio-text').innerHTML = marked.parse(data.step3_audio);
+                        document.getElementById('step3-audio-container').classList.remove('hidden');
+                        
+                        const audioDuration = document.getElementById('audio-duration').value;
+                        const audioWpm = document.getElementById('audio-wpm').value;
+                        document.getElementById('step3-param-duration').textContent = audioDuration;
+                        document.getElementById('step3-param-wpm').textContent = audioWpm;
+                        document.getElementById('step3-audio-params').classList.remove('hidden');
+                    }
+                } else {
+                    document.getElementById('loading-desc').innerHTML = chunk.message;
+                    const floatingLoader = document.getElementById('floating-loader-text');
+                    if (floatingLoader) {
+                        floatingLoader.innerHTML = chunk.message;
+                        document.getElementById('floating-loader').classList.remove('hidden');
+                    }
+                }
+            }
+        }
+        
+        // Process any remaining buffer just in case the stream ended without a trailing newline pair
+        if (buffer.trim()) {
+            const lines = buffer.split(/\r?\n/);
+            for (const line of lines) {
+                if (line.startsWith('data:')) {
+                    try {
+                        const jsonStr = line.substring(line.indexOf(':') + 1).trim();
+                        const chunk = JSON.parse(jsonStr);
+                        if (chunk.step === "done") finalData = chunk.result;
+                        if (chunk.step === "error") throw new Error(chunk.message);
+                    } catch (e) {}
                 }
             }
         }
