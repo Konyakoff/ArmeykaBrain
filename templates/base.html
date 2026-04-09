@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}ArmeykaBrain - ИИ Юрист{% endblock %}</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&family=Onest:wght@700;800&display=swap" rel="stylesheet">
+    
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- TailwindCSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            main: '#F47920',
+                            orangeHover: '#e0681b',
+                            dark: '#333333',
+                            lightBg: '#fdf9f6',
+                            inputBg: '#fcf6f2',
+                            inputBorder: '#f0dfd1'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Montserrat', 'sans-serif'],
+                        heading: ['Onest', 'Montserrat', 'sans-serif'],
+                    },
+                    boxShadow: {
+                        'soft': '0 10px 40px -10px rgba(244, 121, 32, 0.08)',
+                        'card': '0 8px 30px rgba(0,0,0,0.04)'
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Marked.js for Markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    
+    <link rel="stylesheet" href="/static/css/style.css">
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="text-brand-dark min-h-screen relative overflow-x-hidden">
+
+    <div class="fixed right-[-100px] bottom-[-100px] w-96 h-96 bg-brand-main rounded-full blur-[100px] opacity-10 pointer-events-none z-[-1]"></div>
+
+    <div class="max-w-4xl mx-auto p-4 py-12 flex flex-col gap-8 relative z-10">
+        
+        <!-- Header -->
+        <header class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4">
+            <div class="mb-6 md:mb-0">
+                <a href="/" class="text-4xl sm:text-5xl font-black text-brand-dark tracking-tighter uppercase flex items-center flex-wrap gap-2 hover:opacity-90 transition-opacity">
+                    АРМЕЙКА
+                    <svg class="w-8 h-8 text-brand-main animate-[spin_10s_linear_infinite]" viewBox="0 0 100 100" fill="currentColor">
+                        <path d="M50 0 L58 35 L95 25 L65 50 L95 75 L58 65 L50 100 L42 65 L5 75 L35 50 L5 25 L42 35 Z" />
+                    </svg>
+                    NET <span class="normal-case text-3xl sm:text-4xl ml-1 text-gray-700">Brain</span>
+                </a>
+                <p class="text-gray-500 text-base sm:text-lg mt-2 font-medium tracking-wide">{% block subtitle %}ИИ-юрист эксперт в области военного права{% endblock %}</p>
+            </div>
+            <div>
+                {% block header_actions %}
+                <button onclick="downloadDB()" class="bg-brand-main hover:bg-brand-orangeHover text-white font-bold px-6 py-3 transition-all duration-300 flex items-center gap-3 shadow-soft btn-organic">
+                    <i class="fas fa-cloud-download-alt"></i>
+                    Скачать dialogs.db
+                </button>
+                {% endblock %}
+            </div>
+        </header>
+
+        {% block content %}{% endblock %}
+
+    </div>
+
+    <script src="/static/js/ui.js"></script>
+    <script src="/static/js/api.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

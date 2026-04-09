@@ -1,0 +1,441 @@
+{% extends "base.html" %}
+
+{% block title %}ArmeykaBrain - ИИ Юрист{% endblock %}
+
+{% block subtitle %}ИИ-юрист эксперт в области военного права{% endblock %}
+
+{% block header_actions %}
+<button onclick="downloadDB()" class="bg-brand-main hover:bg-brand-orangeHover text-white font-bold px-6 py-3 transition-all duration-300 flex items-center gap-3 shadow-soft btn-organic">
+    <i class="fas fa-cloud-download-alt"></i>
+    Скачать dialogs.db
+</button>
+{% endblock %}
+
+{% block content %}
+<!-- Main Menu Tabs -->
+<div class="flex items-center gap-2 mb-2 bg-white p-2 rounded-[20px] shadow-sm w-fit border border-gray-50 relative z-20">
+    <button id="tab-text" onclick="switchTab('text')" class="px-6 py-2.5 rounded-xl font-bold transition-all bg-brand-lightBg text-brand-main shadow-sm flex items-center gap-2">
+        <i class="fas fa-keyboard"></i> Text
+    </button>
+    <button id="tab-audio" onclick="switchTab('audio')" class="px-6 py-2.5 rounded-xl font-bold transition-all text-gray-500 hover:text-brand-main hover:bg-gray-50 flex items-center gap-2">
+        <i class="fas fa-microphone"></i> Audio
+    </button>
+</div>
+
+<!-- Card 1: Настройки -->
+<div class="bg-white rounded-[24px] shadow-card p-6 sm:p-10 transition-all duration-300 border border-white relative overflow-hidden group hover:shadow-soft">
+    <div class="decorative-blob top-[-20px] left-[-20px] group-hover:scale-150 transition-transform duration-700"></div>
+    
+    <h2 class="text-xl font-bold text-brand-dark mb-6 flex items-center gap-3 heading-font">
+        <span class="splatter-icon-outline"><i class="fas fa-cog"></i></span>
+        Настройки
+    </h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+        
+        <!-- Model -->
+        <div class="flex flex-col">
+            <label class="text-sm font-semibold text-gray-700 mb-2">Модель</label>
+            <select id="model-select" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
+                <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Загрузка...)</option>
+            </select>
+        </div>
+        
+        <!-- Style -->
+        <div class="flex flex-col">
+            <label class="text-sm font-semibold text-gray-700 mb-2">Стиль ответа</label>
+            <select id="style-select" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
+                <option value="telegram_yur">telegram_yur (Загрузка...)</option>
+            </select>
+        </div>
+
+        <!-- Context Threshold -->
+        <div class="flex flex-col">
+            <label class="text-sm font-semibold text-gray-700 mb-2">Порог контекста (%)</label>
+            <input type="number" id="context-threshold" min="0" max="100" value="70" class="w-full rounded-xl p-4 text-brand-dark font-bold text-lg border-2">
+            <p class="text-xs text-gray-400 mt-2 leading-relaxed">Минимальный процент совпадения для взятия статьи в контекст.</p>
+        </div>
+        
+        <!-- Max Length -->
+        <div class="flex flex-col">
+            <label class="text-sm font-semibold text-gray-700 mb-2">Длина ответа (символов)</label>
+            <input type="number" id="max-length" min="1000" max="10000" step="500" value="4000" class="w-full rounded-xl p-4 text-brand-dark font-bold text-lg border-2">
+            <p class="text-xs text-gray-400 mt-2 leading-relaxed">Максимальное количество символов в ответе ИИ.</p>
+        </div>
+
+        <!-- Audio Duration (Hidden by default) -->
+        <div class="audio-only flex flex-col hidden transition-all duration-300">
+            <label class="text-sm font-semibold text-gray-700 mb-2">Длительность аудио (сек)</label>
+            <input type="number" id="audio-duration" min="14" max="300" value="30" class="w-full rounded-xl p-4 text-brand-dark font-bold text-lg border-2">
+            <p class="text-xs text-gray-400 mt-2 leading-relaxed">Время от 14 до 300 секунд (для аудио).</p>
+        </div>
+
+        <!-- Audio WPM (Hidden by default) -->
+        <div class="audio-only flex flex-col hidden transition-all duration-300">
+            <div class="flex justify-between items-center mb-2">
+                <label class="text-sm font-semibold text-gray-700">Скорость (слов в минуту)</label>
+                <span id="audio-wpm-val" class="font-bold text-brand-main bg-brand-lightBg px-3 py-1 rounded-lg text-sm border border-brand-main/20">150</span>
+            </div>
+            <div class="relative pt-1 pb-4">
+                <input type="range" id="audio-wpm" min="105" max="180" value="150" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-brand-main" oninput="document.getElementById('audio-wpm-val').innerText = this.value">
+                <div class="flex justify-between text-xs text-gray-400 mt-2 px-1 absolute w-full top-3">
+                    <span>105 (Мин)</span>
+                    <span class="absolute left-[60%] -translate-x-1/2 flex flex-col items-center">
+                        <span class="h-1.5 w-0.5 bg-gray-300 mb-0.5"></span>
+                        150 (Норма)
+                    </span>
+                    <span>180 (Макс)</span>
+                </div>
+            </div>
+            <p class="text-xs text-gray-400 mt-3 leading-relaxed">Влияет на длину текста и темп диктора.</p>
+        </div>
+
+        <!-- ElevenLabs Voice (Hidden by default) -->
+        <div class="audio-only flex flex-col hidden transition-all duration-300">
+            <label class="text-sm font-semibold text-gray-700 mb-2">Голос диктора</label>
+            <select id="elevenlabs-voice" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
+                <option value="pFZP5JQG7iQjIQuC4Bku">Lily (Загрузка...)</option>
+            </select>
+        </div>
+        <div class="audio-only flex flex-col hidden transition-all duration-300">
+            <label class="text-sm font-semibold text-gray-700 mb-2">Модель озвучки (ElevenLabs)</label>
+            <select id="elevenlabs-model" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
+                <option value="eleven_multilingual_v2">Eleven Multilingual v2</option>
+                <option value="eleven_v3" selected>Eleven v3</option>
+                <option value="eleven_turbo_v2_5">Eleven Turbo v2.5</option>
+                <option value="eleven_flash_v2_5">Eleven Flash v2.5</option>
+            </select>
+        </div>
+
+        <div class="audio-only flex flex-col hidden transition-all duration-300">
+            <label class="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1 relative w-fit">
+                            Стиль (Style)
+                            <span class="group/tooltip relative cursor-help inline-flex items-center ml-1">
+                                <i class="fas fa-question-circle text-gray-400 transition-colors group-hover/tooltip:text-brand-main"></i>
+                                <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-gray-800 text-white text-[10px] leading-tight rounded-lg opacity-0 invisible transition-all z-50 pointer-events-none text-center shadow-lg group-hover/tooltip:opacity-100 group-hover/tooltip:visible font-normal">
+                                    Усиливает экспрессию (0.0 - 1.0). Выше 0.0 делает голос эмоциональнее, но может снизить стабильность.
+                                </div>
+                            </span>
+                        </label>
+            <input type="number" id="audio-style" min="0" max="1" step="0.05" value="0.25" class="w-full rounded-xl p-4 text-brand-dark font-bold text-lg border-2">
+        </div>
+
+        <div class="audio-only flex flex-col hidden transition-all duration-300">
+            <label class="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1 relative w-fit">
+                            Speaker Boost
+                            <span class="group/tooltip relative cursor-help inline-flex items-center ml-1">
+                                <i class="fas fa-question-circle text-gray-400 transition-colors group-hover/tooltip:text-brand-main"></i>
+                                <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-gray-800 text-white text-[10px] leading-tight rounded-lg opacity-0 invisible transition-all z-50 pointer-events-none text-center shadow-lg group-hover/tooltip:opacity-100 group-hover/tooltip:visible font-normal">
+                                    Улучшает качество звучания голоса и сходство с оригиналом. Рекомендуется всегда оставлять включенным.
+                                </div>
+                            </span>
+                        </label>
+            <div class="flex items-center mt-2">
+                <input type="checkbox" id="use-speaker-boost" checked class="organic-checkbox w-6 h-6 text-brand-main bg-gray-100 border-gray-300 rounded focus:ring-brand-main">
+                <span class="ml-3 text-sm font-medium text-gray-700">Включить Boost</span>
+            </div>
+        </div>
+
+        <!-- Checkbox -->
+        <div class="flex items-center md:items-start md:col-span-2 md:mt-2">
+            <label class="flex items-center cursor-pointer group/cb">
+                <div class="relative flex items-center justify-center mr-4">
+                    <input type="checkbox" id="send-prompts" class="organic-checkbox">
+                </div>
+                <span class="text-sm font-medium text-gray-700 group-hover/cb:text-brand-dark transition-colors mt-0.5">
+                    Получать prompt.txt <span class="text-gray-400 font-normal block sm:inline">(тексты запросов к ИИ)</span>
+                </span>
+            </label>
+        </div>
+    </div>
+</div>
+
+<!-- Card 2: Ваш вопрос -->
+<div class="bg-white rounded-[24px] shadow-card p-6 sm:p-10 transition-all duration-300 border border-white relative overflow-hidden group hover:shadow-soft">
+    <h2 class="text-xl font-bold text-brand-dark mb-5 flex items-center gap-3 heading-font">
+        <span class="splatter-icon"><i class="far fa-comment-dots"></i></span>
+        Ваш вопрос
+    </h2>
+    <textarea id="question-input" rows="4" placeholder="Возьмут ли в армию с трещиной тазовой кости?" class="w-full rounded-xl p-5 text-brand-dark font-medium border-2 resize-y mb-6 text-base leading-relaxed placeholder-gray-400"></textarea>
+    
+    <div class="flex items-center gap-4">
+        <button id="submit-btn" onclick="sendQuery()" class="w-full sm:w-auto text-white font-bold py-3.5 px-10 flex items-center justify-center gap-3 btn-organic shadow-md">
+            <i class="far fa-paper-plane text-lg"></i>
+            Отправить запрос
+        </button>
+        <!-- Decorative Splatter near button -->
+        <div class="hidden sm:block w-12 h-12 bg-brand-main opacity-90 rounded-[40%_60%_70%_30%/40%_50%_60%_50%] animate-[morph_4s_ease-in-out_infinite_alternate] shadow-sm flex items-center justify-center text-white">
+            <i class="fas fa-magic text-sm"></i>
+        </div>
+    </div>
+</div>
+
+<!-- Results Area -->
+<div id="result-container" class="hidden flex-col gap-8">
+    
+    <!-- Loading State -->
+    <div id="loading-state" class="bg-white rounded-[24px] shadow-card p-12 text-center hidden relative overflow-hidden">
+        <div class="absolute inset-0 bg-brand-main opacity-5 animate-pulse"></div>
+        <div class="relative z-10">
+            <div class="inline-flex items-center justify-center w-20 h-20 mb-6 bg-brand-lightBg rounded-full border-4 border-dashed border-brand-main animate-[spin_3s_linear_infinite]">
+                <i class="fas fa-robot text-3xl text-brand-main animate-pulse"></i>
+            </div>
+            <h3 id="loading-title" class="text-2xl font-bold text-brand-dark heading-font">Анализирую вопрос...</h3>
+            <p id="loading-desc" class="text-gray-500 mt-3 font-medium">Инициализация...</p>
+        </div>
+    </div>
+
+    <!-- Error State -->
+    <div id="error-state" class="bg-red-50 border-2 border-red-200 rounded-[24px] shadow-sm p-8 hidden relative overflow-hidden">
+        <div class="flex items-start gap-5 relative z-10">
+            <div class="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0 text-red-500">
+                <i class="fas fa-exclamation-triangle text-xl"></i>
+            </div>
+            <div>
+                <h3 class="text-lg font-bold text-red-800 heading-font">Произошла ошибка</h3>
+                <div id="error-message" class="mt-2 text-sm text-red-700 whitespace-pre-wrap font-medium"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Success States -->
+    <div id="success-state" class="hidden flex-col gap-8">
+        
+        <!-- Card 3: Результаты первого этапа -->
+        <div id="card-step1" class="bg-white rounded-[24px] shadow-card p-6 sm:p-10 border border-gray-50 relative overflow-hidden group hidden">
+            <h2 class="text-xl font-bold text-brand-dark mb-6 flex items-center gap-3 heading-font border-b border-gray-100 pb-4">
+                <span class="splatter-icon-outline"><i class="fas fa-search"></i></span>
+                Результаты первого этапа (поиск)
+            </h2>
+            <div id="step1-info" class="step1-body text-gray-800 text-base leading-relaxed"></div>
+        </div>
+
+        <!-- Card 4: Экспертное заключение -->
+        <div id="card-step2" class="bg-white rounded-[24px] shadow-soft p-6 sm:p-12 relative overflow-hidden border-t-4 border-brand-main hidden">
+            <!-- Subtle watermark -->
+            <i class="fas fa-balance-scale absolute right-[-5%] top-[-5%] text-[250px] text-gray-50 opacity-50 rotate-12 pointer-events-none"></i>
+            
+            <h2 class="text-2xl font-black text-brand-dark mb-8 flex items-center gap-4 heading-font relative z-10">
+                <div class="w-10 h-10 bg-brand-main rounded-[40%_60%_70%_30%/40%_50%_60%_50%] flex items-center justify-center text-white shadow-md">
+                    <i class="fas fa-gavel text-sm"></i>
+                </div>
+                Экспертное заключение
+            </h2>
+            <div id="final-answer" class="markdown-body text-gray-800 text-base relative z-10"></div>
+        </div>
+
+        <!-- Card 5: Скрипт для Аудио (Шаг 3) -->
+        <div id="step3-audio-container" class="bg-white rounded-[24px] shadow-soft p-6 sm:p-12 relative overflow-hidden border-t-4 border-purple-500 hidden">
+            <i class="fas fa-headphones absolute right-[-5%] top-[-5%] text-[250px] text-gray-50 opacity-50 rotate-12 pointer-events-none"></i>
+            
+            <h2 class="text-2xl font-black text-brand-dark mb-8 flex items-center gap-4 heading-font relative z-10">
+                <div class="w-10 h-10 bg-purple-500 rounded-[40%_60%_70%_30%/40%_50%_60%_50%] flex items-center justify-center text-white shadow-md">
+                    <i class="fas fa-music text-sm"></i>
+                </div>
+                <div>
+                    Короткий текст для аудио
+                    <div id="step3-audio-params" class="text-sm font-normal text-gray-500 mt-1 hidden">
+                        Длительность: <span id="step3-param-duration" class="font-bold text-gray-700"></span> сек • 
+                        Скорость: <span id="step3-param-wpm" class="font-bold text-gray-700"></span> слов/мин
+                    </div>
+                </div>
+            </h2>
+            <div id="step3-audio-text" class="markdown-body text-gray-800 text-base relative z-10 mb-6"></div>
+            
+            <div id="step4-audio-player-container" class="relative z-10 mt-6 border-t border-purple-200 pt-6 hidden">
+                <h3 class="text-lg font-bold text-brand-dark mb-4 flex items-center gap-2 heading-font">
+                    <i class="fas fa-play-circle text-purple-500"></i>
+                    Сгенерированная озвучка (ElevenLabs)
+                </h3>
+                <div id="step4-audio-badge"></div>
+                <div class="flex items-center gap-3 mb-4 w-full">
+                    <audio id="step4-audio-player" controls class="flex-1 rounded-xl shadow-sm">
+                        <source id="step4-audio-source" src="" type="audio/mpeg">
+                        Ваш браузер не поддерживает элемент audio.
+                    </audio>
+                    <a id="step4-audio-download" href="#" download class="flex-shrink-0 bg-brand-lightBg text-purple-500 hover:text-white hover:bg-purple-500 border border-purple-200 transition-colors w-12 h-12 flex items-center justify-center rounded-xl shadow-sm" title="Скачать оригинальное аудио">
+                        <i class="fas fa-download"></i>
+                    </a>
+                    <button id="step4-audio-evaluate-btn" onclick="evaluateMainAudio()" class="flex-shrink-0 bg-brand-lightBg text-purple-500 hover:text-white hover:bg-purple-500 border border-purple-200 transition-colors w-12 h-12 flex items-center justify-center rounded-xl shadow-sm" title="Оценить качество">
+                        <i class="fas fa-star"></i>
+                    </button>
+                </div>
+                
+                <div id="evaluation-result-container" class="hidden mb-6 bg-purple-50 border border-purple-100 rounded-xl p-4">
+                    <h4 class="font-bold text-brand-dark mb-2 text-sm flex items-center gap-2"><i class="fas fa-chart-line text-purple-500"></i> Оценка качества (Gemini 3.1 Pro)</h4>
+                    <div class="flex flex-wrap gap-4 text-sm text-brand-dark mb-2">
+                        <div class="flex flex-col relative">
+                            <span class="text-xs text-gray-500">Идеальность</span>
+                            <span class="font-bold text-purple-600 cursor-pointer underline decoration-dotted underline-offset-2 hover:text-purple-800" onclick="toggleTooltip('eval-tooltip-main')" id="eval-percent"></span>
+                            <div class="absolute bottom-full left-0 mb-2 w-80 sm:w-96 md:w-[600px] max-w-[90vw] max-h-[60vh] flex flex-col bg-gray-800 text-white text-xs rounded-lg opacity-0 invisible transition-all z-50 shadow-2xl eval-tooltip" id="eval-tooltip-main">
+                                <div class="flex justify-between items-center p-2 border-b border-gray-700 bg-gray-900 rounded-t-lg sticky top-0">
+                                    <span class="font-bold">Рекомендации Gemini</span>
+                                    <button onclick="closeTooltip('eval-tooltip-main')" class="text-gray-400 hover:text-white px-2"><i class="fas fa-times text-sm"></i></button>
+                                </div>
+                                <div class="p-3 overflow-y-auto whitespace-pre-wrap" id="eval-do-better"></div>
+                            </div>
+                        </div>
+                        <div class="flex flex-col">
+                            <span class="text-xs text-gray-500">Рек. Stability</span>
+                            <span class="font-bold" id="eval-stability"></span>
+                        </div>
+                        <div class="flex flex-col">
+                            <span class="text-xs text-gray-500">Рек. Similarity</span>
+                            <span class="font-bold" id="eval-similarity"></span>
+                        </div>
+                    </div>
+                    <div class="text-xs text-gray-500" id="eval-cost"></div>
+                </div>
+
+                <div id="additional-audios" class="flex flex-col gap-4 mb-6"></div>
+                
+                <div class="bg-purple-50 p-5 rounded-xl border border-purple-100">
+                    <h4 class="font-bold text-brand-dark mb-3 flex items-center"><i class="fas fa-sliders-h text-purple-500 mr-2"></i>Дополнительная генерация аудио (без изменения текста)</h4>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div class="flex flex-col">
+                        <label class="text-xs font-semibold text-gray-600 mb-1">Модель ElevenLabs</label>
+                        <select id="regen-model" class="rounded-lg p-2 border border-gray-200 text-sm">
+                            <option value="eleven_multilingual_v2">Eleven Multilingual v2</option>
+                            <option value="eleven_v3" selected>Eleven v3</option>
+                            <option value="eleven_turbo_v2_5">Eleven Turbo v2.5</option>
+                            <option value="eleven_flash_v2_5">Eleven Flash v2.5</option>
+                        </select>
+                    </div>
+                    <div class="flex flex-col">
+                        <label class="text-xs font-semibold text-gray-600 mb-1">Голос диктора</label>
+                        <select id="regen-voice" class="rounded-lg p-2 border border-gray-200 text-sm">
+                            <option value="FGY2WhTYpPnroxEErjIq">Laura (Загрузка...)</option>
+                        </select>
+                    </div>
+                        <div class="flex flex-col">
+                            <div class="flex justify-between items-center mb-2">
+                                <label class="text-xs font-semibold text-gray-600">Скорость (слов в мин.)</label>
+                                <span id="regen-wpm-val" class="font-bold text-purple-600 text-xs bg-purple-100 px-2 py-0.5 rounded-md border border-purple-200">150</span>
+                            </div>
+                            <div class="relative pt-1 pb-4">
+                                <input type="range" id="regen-wpm" min="105" max="180" value="150" class="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-purple-500" oninput="document.getElementById('regen-wpm-val').innerText = this.value">
+                                <div class="flex justify-between text-[10px] text-gray-400 mt-2 px-1 absolute w-full top-3">
+                                    <span>105</span>
+                                    <span class="absolute left-[60%] -translate-x-1/2 flex flex-col items-center">
+                                        <span class="h-1 w-px bg-gray-300 mb-px"></span>
+                                        150 (Норма)
+                                    </span>
+                                    <span>180</span>
+                                </div>
+                            </div>
+                        </div>
+                    <div class="flex flex-col">
+                        <label class="text-xs font-semibold text-gray-600 mb-1 flex items-center gap-1 relative w-fit">
+                            Stability (0.0 - 1.0)
+                            <span class="group/tooltip relative cursor-help inline-flex items-center ml-1">
+                                <i class="fas fa-question-circle text-gray-400 transition-colors group-hover/tooltip:text-brand-main"></i>
+                                <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-gray-800 text-white text-[10px] leading-tight rounded-lg opacity-0 invisible transition-all z-50 pointer-events-none text-center shadow-lg group-hover/tooltip:opacity-100 group-hover/tooltip:visible font-normal">
+                                    Более высокое значение делает голос более стабильным и предсказуемым, но менее эмоциональным. Низкие значения дают больше эмоций, но могут звучать нестабильно.
+                                </div>
+                            </span>
+                        </label>
+                        <input type="number" id="regen-stability" value="0.5" min="0" max="1" step="0.1" class="rounded-lg p-2 border border-gray-200 text-sm">
+                    </div>
+                    <div class="flex flex-col">
+                        <label class="text-xs font-semibold text-gray-600 mb-1 flex items-center gap-1 relative w-fit">
+                            Similarity Boost (0.0 - 1.0)
+                            <span class="group/tooltip relative cursor-help inline-flex items-center ml-1">
+                                <i class="fas fa-question-circle text-gray-400 transition-colors group-hover/tooltip:text-brand-main"></i>
+                                <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-gray-800 text-white text-[10px] leading-tight rounded-lg opacity-0 invisible transition-all z-50 pointer-events-none text-center shadow-lg group-hover/tooltip:opacity-100 group-hover/tooltip:visible font-normal">
+                                    Высокое значение заставляет голос максимально походить на оригинальный семпл. При слишком высоких значениях может появиться металлический оттенок.
+                                </div>
+                            </span>
+                        </label>
+                        <input type="number" id="regen-similarity" value="0.75" min="0" max="1" step="0.05" class="rounded-lg p-2 border border-gray-200 text-sm">
+                    </div>
+                    <div class="flex flex-col">
+                        <label class="text-xs font-semibold text-gray-600 mb-1 flex items-center gap-1 relative w-fit">
+                            Стиль (Style)
+                            <span class="group/tooltip relative cursor-help inline-flex items-center ml-1">
+                                <i class="fas fa-question-circle text-gray-400 transition-colors group-hover/tooltip:text-brand-main"></i>
+                                <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-gray-800 text-white text-[10px] leading-tight rounded-lg opacity-0 invisible transition-all z-50 pointer-events-none text-center shadow-lg group-hover/tooltip:opacity-100 group-hover/tooltip:visible font-normal">
+                                    Усиливает экспрессию (0.0 - 1.0). Выше 0.0 делает голос эмоциональнее, но может снизить стабильность.
+                                </div>
+                            </span>
+                        </label>
+                        <input type="number" id="regen-style" value="0.25" min="0" max="1" step="0.05" class="rounded-lg p-2 border border-gray-200 text-sm">
+                    </div>
+                    <div class="flex flex-col justify-center mt-2">
+                        <label class="text-xs font-semibold text-gray-600 mb-1 flex items-center gap-1 relative w-fit">
+                            Speaker Boost
+                            <span class="group/tooltip relative cursor-help inline-flex items-center ml-1">
+                                <i class="fas fa-question-circle text-gray-400 transition-colors group-hover/tooltip:text-brand-main"></i>
+                                <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-gray-800 text-white text-[10px] leading-tight rounded-lg opacity-0 invisible transition-all z-50 pointer-events-none text-center shadow-lg group-hover/tooltip:opacity-100 group-hover/tooltip:visible font-normal">
+                                    Улучшает качество звучания голоса и сходство с оригиналом. Рекомендуется всегда оставлять включенным.
+                                </div>
+                            </span>
+                        </label>
+                        <div class="flex items-center">
+                            <input type="checkbox" id="regen-boost" checked class="organic-checkbox w-5 h-5 text-brand-main bg-gray-100 border-gray-300 rounded focus:ring-brand-main">
+                            <span class="ml-2 text-xs font-medium text-gray-700">Включить</span>
+                        </div>
+                    </div>
+                    </div>
+                    <button id="regen-audio-btn" onclick="generateAdditionalAudio()" class="mt-4 bg-purple-500 hover:bg-purple-600 text-white font-bold py-2 px-6 rounded-xl transition-all shadow-sm text-sm flex items-center justify-center gap-2">
+                        <i class="fas fa-magic"></i> Сгенерировать еще вариант
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Prompts Download -->
+        <div id="prompts-container" class="bg-white rounded-[24px] shadow-card p-6 sm:p-8 hidden flex-col sm:flex-row items-start sm:items-center gap-5 border border-gray-50">
+            <div class="flex items-center gap-3">
+                <span class="splatter-icon"><i class="fas fa-file-code"></i></span>
+                <p class="text-base font-bold text-brand-dark heading-font">Сохраненные промпты:</p>
+            </div>
+            <div class="flex flex-wrap gap-3 w-full sm:w-auto" id="prompts-buttons-container">
+                <button id="btn-prompt1" class="flex-1 sm:flex-none text-sm border-2 border-brand-inputBorder bg-brand-lightBg hover:border-brand-main hover:text-brand-main text-brand-dark px-5 py-2.5 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 font-bold shadow-sm">
+                    <i class="far fa-file-alt"></i> step1.txt
+                </button>
+                <button id="btn-prompt2" class="flex-1 sm:flex-none text-sm border-2 border-brand-inputBorder bg-brand-lightBg hover:border-brand-main hover:text-brand-main text-brand-dark px-5 py-2.5 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 font-bold shadow-sm">
+                    <i class="far fa-file-alt"></i> step2.txt
+                </button>
+                <button id="btn-prompt3" class="hidden flex-1 sm:flex-none text-sm border-2 border-brand-inputBorder bg-brand-lightBg hover:border-purple-500 hover:text-purple-500 text-brand-dark px-5 py-2.5 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 font-bold shadow-sm">
+                    <i class="far fa-file-alt"></i> step3.txt
+                </button>
+            </div>
+        </div>
+
+        <!-- Result URL Link -->
+        <div id="result-link-container" class="text-center mt-2 hidden">
+            <p class="text-sm text-gray-500 mb-2">Прямая ссылка на результат:</p>
+            <a id="result-link" href="#" target="_blank" class="inline-flex items-center gap-2 text-brand-main font-bold hover:text-brand-orangeHover transition-colors bg-brand-lightBg px-6 py-3 rounded-xl border-2 border-brand-inputBorder shadow-sm">
+                <i class="fas fa-external-link-alt"></i>
+                <span id="result-link-text"></span>
+            </a>
+        </div>
+        
+        <!-- Floating Loader for progressive steps -->
+        <div id="floating-loader" class="bg-white rounded-xl shadow-soft p-4 border border-gray-100 hidden flex items-center justify-center gap-3 w-fit mx-auto mt-4 animate-pulse">
+            <i class="fas fa-circle-notch fa-spin text-brand-main text-lg"></i>
+            <span id="floating-loader-text" class="text-brand-dark font-medium text-sm">Обработка...</span>
+        </div>
+        
+    </div>
+</div>
+
+<!-- History Area -->
+<div class="mt-12 mb-8">
+    <h2 class="text-2xl font-black text-brand-dark mb-6 flex items-center gap-3 heading-font">
+        <span class="splatter-icon-outline"><i class="fas fa-history"></i></span>
+        История запросов
+    </h2>
+    <div id="history-list" class="flex flex-col gap-4">
+        <!-- History items will be inserted here -->
+    </div>
+    <div class="text-center mt-6">
+        <button id="show-more-history" onclick="toggleHistory()" class="text-brand-main font-bold hover:text-brand-orangeHover transition-colors hidden">
+            <i class="fas fa-chevron-down mr-1"></i> Показать все
+        </button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/app.js"></script>
+{% endblock %}
