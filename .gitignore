@@ -6,3 +6,5 @@ db/
 data/
 static/audio/
 .cursor/
+*.db
+*.sqlite3
