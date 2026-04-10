@@ -131,11 +131,20 @@ async function generateAdditionalAudio() {
     const btn = document.getElementById('regen-audio-btn');
     const model = document.getElementById('regen-model').value;
     const voice = document.getElementById('regen-voice') ? document.getElementById('regen-voice').value : 'FGY2WhTYpPnroxEErjIq';
-    const wpm = parseInt(document.getElementById('regen-wpm').value) || 175;
+    const wpm = parseInt(document.getElementById('regen-wpm').value) || 150;
     const stability = parseFloat(document.getElementById('regen-stability').value) || 0.5;
     const similarity = parseFloat(document.getElementById('regen-similarity').value) || 0.75;
     const style = document.getElementById('regen-style') ? parseFloat(document.getElementById('regen-style').value) : 0.25;
     const boost = document.getElementById('regen-boost') ? document.getElementById('regen-boost').checked : true;
+    
+    // Сохраняем в localStorage
+    localStorage.setItem('elevenlabsModel', model);
+    localStorage.setItem('elevenlabsVoice', voice);
+    localStorage.setItem('audioWpm', wpm);
+    localStorage.setItem('audioStability', stability);
+    localStorage.setItem('audioSimilarity', similarity);
+    localStorage.setItem('audioStyle', style);
+    localStorage.setItem('useSpeakerBoost', boost);
     
     const step3Element = document.getElementById('step3-audio-text');
     let text = step3Element ? (step3Element.innerText || step3Element.textContent) : '';

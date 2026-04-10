@@ -4,27 +4,84 @@ let allHistory = [];
 let isHistoryExpanded = false;
 let currentTab = 'text';
 window.currentSlug = null;
+let currentAbortController = null;
+let tabQuestions = { text: '', audio: '', video: '' };
 
-function switchTab(tab) {
+// При загрузке страницы проверяем URL и переключаем на нужную вкладку
+document.addEventListener('DOMContentLoaded', () => {
+    const hash = window.location.pathname.replace('/', '') || 'text';
+    if (['text', 'audio', 'video'].includes(hash)) {
+        switchTab(hash, true);
+    }
+});
+
+function switchTab(tab, initial = false) {
+    if (!initial && currentTab === tab) return;
+    
+    // Сохраняем введенный текст текущей вкладки
+    const qInput = document.getElementById('question-input');
+    if (qInput && !initial) {
+        tabQuestions[currentTab] = qInput.value;
+    }
+    
     currentTab = tab;
+    
+    // Меняем URL без перезагрузки
+    window.history.pushState(null, '', '/' + tab);
+    
+    // Если идет генерация, отменяем её
+    if (currentAbortController) {
+        currentAbortController.abort();
+        currentAbortController = null;
+    }
+    
+    // Сбрасываем интерфейс
+    resetUI();
+    
+    // Восстанавливаем текст для новой вкладки
+    if (qInput) {
+        qInput.value = tabQuestions[tab] || '';
+    }
+
     const tabText = document.getElementById('tab-text');
     const tabAudio = document.getElementById('tab-audio');
+    const tabVideo = document.getElementById('tab-video');
     const audioOnlyElements = document.querySelectorAll('.audio-only');
+    const videoOnlyElements = document.querySelectorAll('.video-only');
     
+    // Сбросим стили вкладок
+    const inactiveClass = "px-6 py-2.5 rounded-xl font-bold transition-all text-gray-500 hover:text-brand-main hover:bg-gray-50 flex items-center gap-2";
+    const activeClass = "px-6 py-2.5 rounded-xl font-bold transition-all bg-brand-lightBg text-brand-main shadow-sm flex items-center gap-2";
+    
+    tabText.className = inactiveClass;
+    tabAudio.className = inactiveClass;
+    if (tabVideo) tabVideo.className = inactiveClass;
+
     if (tab === 'text') {
-        tabText.className = "px-6 py-2.5 rounded-xl font-bold transition-all bg-brand-lightBg text-brand-main shadow-sm flex items-center gap-2";
-        tabAudio.className = "px-6 py-2.5 rounded-xl font-bold transition-all text-gray-500 hover:text-brand-main hover:bg-gray-50 flex items-center gap-2";
+        tabText.className = activeClass;
         audioOnlyElements.forEach(el => el.classList.add('hidden'));
+        videoOnlyElements.forEach(el => el.classList.add('hidden'));
         
         const styleSelect = document.getElementById('style-select');
         const savedStyleText = localStorage.getItem('selectedStyleText') || 'telegram_yur';
         if (styleSelect.querySelector(`option[value="${savedStyleText}"]`)) {
             styleSelect.value = savedStyleText;
         }
-    } else {
-        tabAudio.className = "px-6 py-2.5 rounded-xl font-bold transition-all bg-brand-lightBg text-brand-main shadow-sm flex items-center gap-2";
-        tabText.className = "px-6 py-2.5 rounded-xl font-bold transition-all text-gray-500 hover:text-brand-main hover:bg-gray-50 flex items-center gap-2";
+    } else if (tab === 'audio') {
+        tabAudio.className = activeClass;
         audioOnlyElements.forEach(el => el.classList.remove('hidden'));
+        videoOnlyElements.forEach(el => el.classList.add('hidden'));
+        
+        const styleSelect = document.getElementById('style-select');
+        const savedStyleAudio = localStorage.getItem('selectedStyleAudio') || 'audio_yur';
+        if (styleSelect.querySelector(`option[value="${savedStyleAudio}"]`)) {
+            styleSelect.value = savedStyleAudio;
+        }
+    } else if (tab === 'video') {
+        if (tabVideo) tabVideo.className = activeClass;
+        // Для видео нужны и аудио-настройки (для генерации голоса)
+        audioOnlyElements.forEach(el => el.classList.remove('hidden'));
+        videoOnlyElements.forEach(el => el.classList.remove('hidden'));
         
         const styleSelect = document.getElementById('style-select');
         const savedStyleAudio = localStorage.getItem('selectedStyleAudio') || 'audio_yur';
@@ -75,9 +132,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (savedAudioStyle) document.getElementById('audio-style').value = savedAudioStyle;
     document.getElementById('audio-style').addEventListener('change', (e) => localStorage.setItem('audioStyle', e.target.value));
 
+    const savedAudioStability = localStorage.getItem('audioStability');
+    if (savedAudioStability) document.getElementById('audio-stability').value = savedAudioStability;
+    document.getElementById('audio-stability').addEventListener('change', (e) => localStorage.setItem('audioStability', e.target.value));
+
+    const savedAudioSimilarity = localStorage.getItem('audioSimilarity');
+    if (savedAudioSimilarity) document.getElementById('audio-similarity').value = savedAudioSimilarity;
+    document.getElementById('audio-similarity').addEventListener('change', (e) => localStorage.setItem('audioSimilarity', e.target.value));
+
     const savedSpeakerBoost = localStorage.getItem('useSpeakerBoost');
     if (savedSpeakerBoost !== null) document.getElementById('use-speaker-boost').checked = savedSpeakerBoost === 'true';
     document.getElementById('use-speaker-boost').addEventListener('change', (e) => localStorage.setItem('useSpeakerBoost', e.target.checked));
+
+    const savedVideoFormat = localStorage.getItem('videoFormat');
+    if (savedVideoFormat) {
+        const vfEl = document.getElementById('video-format');
+        if (vfEl) vfEl.value = savedVideoFormat;
+    }
+    document.getElementById('video-format')?.addEventListener('change', (e) => {
+        localStorage.setItem('videoFormat', e.target.value);
+        updateAvatarStyleHint('video-format', 'avatar-style', 'avatar-style-hint');
+        updateAvatarButtonText('heygen-avatar', 'heygen-avatar-btn', 'video-format');
+    });
+
+    const savedHeygenEngine = localStorage.getItem('heygenEngine');
+    if (savedHeygenEngine) {
+        const engineEl = document.getElementById('heygen-engine');
+        if (engineEl) engineEl.value = savedHeygenEngine;
+    }
+    document.getElementById('heygen-engine')?.addEventListener('change', (e) => localStorage.setItem('heygenEngine', e.target.value));
 });
 
 async function loadConfig() {
@@ -126,6 +209,19 @@ async function loadConfig() {
                 regenVoice.addEventListener('change', (e) => {
                     localStorage.setItem('elevenlabsVoice', e.target.value);
                     if(voiceSelect) voiceSelect.value = e.target.value;
+                });
+            }
+        }
+        
+        if (data.avatars && data.avatars.length > 0) {
+            windowAvatars = data.avatars;
+            const savedAvatar = localStorage.getItem('heygenAvatar') || data.default_avatar;
+            updateAvatarButtonText('heygen-avatar', 'heygen-avatar-btn', 'video-format');
+            
+            const formatElem = document.getElementById('video-format');
+            if (formatElem) {
+                formatElem.addEventListener('change', () => {
+                    updateAvatarButtonText('heygen-avatar', 'heygen-avatar-btn', 'video-format');
                 });
             }
         }
@@ -192,6 +288,33 @@ function toggleHistory() {
     renderHistory();
 }
 
+function resetUI() {
+    const resultContainer = document.getElementById('result-container');
+    if (resultContainer) {
+        resultContainer.classList.add('hidden');
+        resultContainer.classList.remove('flex');
+    }
+    
+    const elementsToHide = [
+        'loading-state', 'error-state', 'success-state',
+        'card-step1', 'card-step2', 'step3-audio-container',
+        'step4-audio-player-container', 'floating-loader',
+        'prompts-container', 'result-link-container', 'step5-video-container'
+    ];
+    
+    elementsToHide.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('hidden');
+    });
+    
+    const submitBtn = document.getElementById('submit-btn');
+    if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        submitBtn.innerHTML = '<i class="far fa-paper-plane text-lg"></i> Отправить запрос';
+    }
+}
+
 async function sendQuery() {
     const question = document.getElementById('question-input').value.trim();
     if (!question) {
@@ -210,7 +333,14 @@ async function sendQuery() {
     const elevenlabsModel = document.getElementById('elevenlabs-model') ? document.getElementById('elevenlabs-model').value : 'eleven_v3';
     const elevenlabsVoice = document.getElementById('elevenlabs-voice') ? document.getElementById('elevenlabs-voice').value : 'FGY2WhTYpPnroxEErjIq';
     const audioStyle = document.getElementById('audio-style') ? parseFloat(document.getElementById('audio-style').value) : 0.25;
+    const audioStability = document.getElementById('audio-stability') ? parseFloat(document.getElementById('audio-stability').value) : 0.5;
+    const audioSimilarity = document.getElementById('audio-similarity') ? parseFloat(document.getElementById('audio-similarity').value) : 0.75;
     const useSpeakerBoost = document.getElementById('use-speaker-boost') ? document.getElementById('use-speaker-boost').checked : true;
+    const heygenAvatarId = document.getElementById('heygen-avatar') ? document.getElementById('heygen-avatar').value : 'Abigail_standing_office_front';
+    const videoFormat = document.getElementById('video-format') ? document.getElementById('video-format').value : '16:9';
+    const heygenEngine = document.getElementById('heygen-engine') ? document.getElementById('heygen-engine').value : 'avatar_iv';
+    const avatarStyleEl = document.getElementById('avatar-style');
+    const avatarStyle = avatarStyleEl ? avatarStyleEl.value : 'auto';
     const sendPrompts = document.getElementById('send-prompts').checked;
 
     const resultContainer = document.getElementById('result-container');
@@ -242,10 +372,13 @@ async function sendQuery() {
     submitBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin text-lg"></i> Запрос в обработке...';
     submitBtn.classList.add('opacity-80', 'cursor-not-allowed');
 
+    currentAbortController = new AbortController();
+
     try {
         const response = await fetch('/api/query', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            signal: currentAbortController.signal,
             body: JSON.stringify({
                 question: question,
                 model: model,
@@ -259,7 +392,13 @@ async function sendQuery() {
                 elevenlabs_model: elevenlabsModel,
                 elevenlabs_voice: elevenlabsVoice,
                 audio_style: audioStyle,
-                use_speaker_boost: useSpeakerBoost
+                use_speaker_boost: useSpeakerBoost,
+                audio_stability: audioStability,
+                audio_similarity_boost: audioSimilarity,
+                heygen_avatar_id: heygenAvatarId,
+                video_format: videoFormat,
+                heygen_engine: heygenEngine,
+                avatar_style: avatarStyle
             })
         });
 
@@ -325,10 +464,14 @@ async function sendQuery() {
                         document.getElementById('step1-info').innerHTML = formatStep1Info(data.step1_info);
                         document.getElementById('card-step1').classList.remove('hidden');
                     }
+                    if (data.step1_stats) document.getElementById('step1-stats').innerHTML = formatStats(data.step1_stats, 1);
+                    
                     if (data.answer) {
                         document.getElementById('final-answer').innerHTML = marked.parse(data.answer);
                         document.getElementById('card-step2').classList.remove('hidden');
                     }
+                    if (data.step2_stats) document.getElementById('step2-stats').innerHTML = formatStats(data.step2_stats, 2);
+                    
                     if (data.step3_audio) {
                         document.getElementById('step3-audio-text').innerHTML = marked.parse(data.step3_audio);
                         document.getElementById('step3-audio-container').classList.remove('hidden');
@@ -338,6 +481,32 @@ async function sendQuery() {
                         document.getElementById('step3-param-duration').textContent = audioDuration;
                         document.getElementById('step3-param-wpm').textContent = audioWpm;
                         document.getElementById('step3-audio-params').classList.remove('hidden');
+                    }
+                    if (data.step3_stats) document.getElementById('step3-stats').innerHTML = formatStats(data.step3_stats, 3);
+                    
+                    if (data.step4_audio_url) {
+                        // Will be handled in done, but we can set stats early
+                        if (data.step4_stats) {
+                            const badge = document.getElementById('step4-audio-badge');
+                            if (badge) badge.classList.add('hidden'); // hide old badge
+                            document.getElementById('step4-stats').innerHTML = formatStats(data.step4_stats, 4);
+                        }
+                    }
+                    
+                    if (data.step5_video_id) {
+                        document.getElementById('step5-video-container').classList.remove('hidden');
+                        if (data.step5_stats) {
+                            document.getElementById('step5-stats').innerHTML = formatStats(data.step5_stats, 5);
+                        }
+                        document.getElementById('step5-video-content').innerHTML = `
+                            <div class="flex flex-col items-center gap-3 w-full">
+                                <div class="bg-gray-100 rounded-xl p-8 flex flex-col items-center justify-center w-full max-w-2xl border-2 border-dashed border-gray-300">
+                                    <i class="fas fa-spinner fa-spin text-4xl text-indigo-500 mb-4"></i>
+                                    <p class="text-brand-dark font-medium text-center">Видео генерируется...</p>
+                                    <p class="text-sm text-gray-500 text-center mt-2">Это может занять несколько минут. Не закрывайте страницу или перейдите по ссылке результата позже.</p>
+                                </div>
+                            </div>
+                        `;
                     }
                 } else {
                     document.getElementById('loading-desc').innerHTML = chunk.message;
@@ -398,83 +567,134 @@ async function sendQuery() {
             document.getElementById('step3-param-wpm').textContent = audioWpm;
             document.getElementById('step3-audio-params').classList.remove('hidden');
             
-            if (data.step4_audio_url) {
-                step4AudioPlayerContainer.classList.remove('hidden');
-                step4AudioSource.src = data.step4_audio_url;
-                document.getElementById('step4-audio-download').href = data.step4_audio_url_original || data.step4_audio_url;
-                step4AudioPlayer.load();
+        if (data.step4_audio_url) {
+            step4AudioPlayerContainer.classList.remove('hidden');
+            step4AudioSource.src = data.step4_audio_url;
+            document.getElementById('step4-audio-download').href = data.step4_audio_url_original || data.step4_audio_url;
+            step4AudioPlayer.load();
+            
+            // Add video generation block
+            const videoBlockId = 'video-upgrade-main';
+            let videoBlockContainer = document.getElementById(videoBlockId);
+            if (!videoBlockContainer) {
+                videoBlockContainer = document.createElement('div');
+                videoBlockContainer.id = videoBlockId;
+                step4AudioPlayerContainer.appendChild(videoBlockContainer);
+            }
+            videoBlockContainer.innerHTML = renderVideoUpgradeBlock('main', data.step4_audio_url_original || data.step4_audio_url, true);
+            
                 
-                let origModel = 'N/A', origVoiceId = 'N/A', origVoiceName = 'N/A', origWpm = 'N/A', origSpeed = 'N/A';
-                let origStability = '0.5', origSimilarity = '0.75', origStyle = '0.25', origBoost = 'true';
-                const m1 = data.answer.match(/Модель: (.+)/);
-                if (m1) origModel = m1[1].trim();
-                const m2 = data.answer.match(/Диктор ID: (.+)/);
-                if (m2) origVoiceId = m2[1].trim();
-                const m_name = data.answer.match(/Диктор Имя: (.+)/);
-                if (m_name) {
-                    origVoiceName = m_name[1].trim().split('-')[0].trim();
-                } else if (origVoiceId !== 'N/A') {
-                    origVoiceName = origVoiceId.substring(0,8) + '...';
-                }
-                const m3 = data.answer.match(/Скорость: (.+) \((.+) слов\/мин\)/);
-                if (m3) {
-                    origSpeed = m3[1].trim();
-                    origWpm = m3[2].trim();
-                }
-                const m_stab = data.answer.match(/Stability: (.+)/);
-                if (m_stab) origStability = m_stab[1].trim();
-                const m_sim = data.answer.match(/Similarity: (.+)/);
-                if (m_sim) origSimilarity = m_sim[1].trim();
-                const m_style = data.answer.match(/Style: (.+)/);
-                if (m_style) origStyle = m_style[1].trim();
-                const m_boost = data.answer.match(/Speaker Boost: (.+)/);
-                if (m_boost) origBoost = m_boost[1].trim();
-                
-                let displayCost = '';
-                const m4 = data.answer.match(/Символов: \d+ \(\$([0-9]+\.[0-9]+)\)/);
-                if (m4 && m4[1]) {
-                    displayCost = ` | Цена: $${m4[1]}`;
-                } else if (data.step4_cost) {
-                    displayCost = ` | Цена: $${parseFloat(data.step4_cost).toFixed(3)}`;
-                }
-                
-                if (step4AudioBadge) {
-                    step4AudioBadge.innerHTML = `<span class="text-xs font-semibold px-2 py-1 bg-purple-100 text-purple-700 rounded-md block w-fit mb-3 border border-purple-200 shadow-sm">${origModel} | Voice: ${origVoiceName} | ${origWpm} сл/мин | Speed: ${origSpeed} | Stability: ${origStability} | Similarity: ${origSimilarity} | Style: ${origStyle} | Boost: ${origBoost}${displayCost}</span>`;
-                }
-                
-                const regenModel = document.getElementById('regen-model');
-                if (regenModel && origModel !== 'N/A') regenModel.value = origModel;
-                
-                const regenVoice = document.getElementById('regen-voice');
-                if (regenVoice && origVoiceId !== 'N/A') {
-                    if ([...regenVoice.options].some(o => o.value === origVoiceId)) {
-                        regenVoice.value = origVoiceId;
+                if (data.step4_stats) {
+                    const stats = data.step4_stats;
+                    const origModel = stats.model || 'N/A';
+                    const origVoiceId = stats.voice_id || 'N/A';
+                    const origVoiceName = stats.voice_name || 'N/A';
+                    const origWpm = stats.wpm || '150';
+                    const origSpeed = stats.speed ? parseFloat(stats.speed).toFixed(2) : '1.00';
+                    const origStability = stats.stability !== undefined ? stats.stability : '0.5';
+                    const origSimilarity = stats.similarity !== undefined ? stats.similarity : '0.75';
+                    const origStyle = stats.style !== undefined ? stats.style : '0.25';
+                    const origBoost = stats.speaker_boost !== undefined ? stats.speaker_boost.toString() : 'true';
+                    const displayCost = stats.total_cost ? ` | Цена: $${parseFloat(stats.total_cost).toFixed(3)}` : '';
+                    
+                    const regenModel = document.getElementById('regen-model');
+                    if (regenModel && origModel !== 'N/A') regenModel.value = origModel;
+                    
+                    const regenVoice = document.getElementById('regen-voice');
+                    if (regenVoice && origVoiceId !== 'N/A') {
+                        if ([...regenVoice.options].some(o => o.value === origVoiceId)) {
+                            regenVoice.value = origVoiceId;
+                        }
+                    }
+                    
+                    const regenWpm = document.getElementById('regen-wpm');
+                    if (regenWpm && origWpm !== 'N/A') {
+                        regenWpm.value = origWpm;
+                        const regenWpmVal = document.getElementById('regen-wpm-val');
+                        if (regenWpmVal) regenWpmVal.innerText = origWpm;
+                    }
+
+                    const regenStability = document.getElementById('regen-stability');
+                    if (regenStability) regenStability.value = origStability;
+
+                    const regenSimilarity = document.getElementById('regen-similarity');
+                    if (regenSimilarity) regenSimilarity.value = origSimilarity;
+
+                    const regenStyle = document.getElementById('regen-style');
+                    if (regenStyle) regenStyle.value = origStyle;
+
+                    const regenBoost = document.getElementById('regen-boost');
+                    if (regenBoost) regenBoost.checked = origBoost === 'true';
+                    
+                    if (step4AudioBadge) {
+                        step4AudioBadge.innerHTML = `<span class="text-xs font-semibold px-2 py-1 bg-purple-100 text-purple-700 rounded-md block w-fit mb-3 border border-purple-200 shadow-sm">${origModel} | Voice: ${origVoiceName} | ${origWpm} сл/мин | Speed: ${origSpeed} | Stability: ${origStability} | Similarity: ${origSimilarity} | Style: ${origStyle} | Boost: ${origBoost}${displayCost}</span>`;
                     }
                 }
                 
-                const regenWpm = document.getElementById('regen-wpm');
-                if (regenWpm && origWpm !== 'N/A') {
-                    regenWpm.value = origWpm;
-                    const regenWpmVal = document.getElementById('regen-wpm-val');
-                    if (regenWpmVal) regenWpmVal.innerText = origWpm;
+                if (data.step5_video_id) {
+                    const step5VideoContainer = document.getElementById('step5-video-container');
+                    const step5VideoContent = document.getElementById('step5-video-content');
+                    step5VideoContainer.classList.remove('hidden');
+                    
+                    // Поллинг статуса видео
+                    const pollVideo = async () => {
+                        try {
+                            const res = await fetch(`/api/video_status?video_id=${data.step5_video_id}`);
+                            const stData = await res.json();
+                            
+                            if (stData.status === "completed" && stData.video_url) {
+                                if (data.step5_stats && data.step5_stats.started_at) {
+                                    data.step5_stats.generation_time_sec = Math.floor(Date.now() / 1000) - data.step5_stats.started_at;
+                                    document.getElementById('step5-stats').innerHTML = formatStats(data.step5_stats, 5);
+                                }
+                                
+                                step5VideoContent.innerHTML = `
+                                    <video controls class="max-h-[70vh] w-auto max-w-full mx-auto rounded-xl shadow-lg border-2 border-indigo-200" style="object-fit: contain;">
+                                        <source src="${stData.video_url}" type="video/mp4">
+                                        Ваш браузер не поддерживает видео.
+                                    </video>
+                                    <div class="mt-4 flex gap-4">
+                                        <a href="${stData.video_url}" download target="_blank" class="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-6 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2">
+                                            <i class="fas fa-download"></i> Скачать видео
+                                        </a>
+                                    </div>
+                                `;
+                                // Обновляем в БД
+                                fetch('/api/update_video_result', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ slug: data.slug, video_url: stData.video_url })
+                                });
+                            } else if (stData.status === "failed" || stData.status === "error") {
+                                step5VideoContent.innerHTML = `
+                                    <div class="bg-red-50 text-red-600 p-6 rounded-xl w-full max-w-2xl border border-red-200 text-center">
+                                        <i class="fas fa-exclamation-triangle text-3xl mb-2"></i>
+                                        <p class="font-bold">Ошибка генерации видео</p>
+                                        <p class="text-sm mt-1">${stData.error || 'Неизвестная ошибка'}</p>
+                                    </div>
+                                `;
+                            } else {
+                                setTimeout(pollVideo, 5000);
+                            }
+                        } catch (e) {
+                            setTimeout(pollVideo, 5000);
+                        }
+                    };
+                    pollVideo();
+                } else {
+                    document.getElementById('step5-video-container').classList.add('hidden');
                 }
-
-                const regenStability = document.getElementById('regen-stability');
-                if (regenStability) regenStability.value = origStability;
-
-                const regenSimilarity = document.getElementById('regen-similarity');
-                if (regenSimilarity) regenSimilarity.value = origSimilarity;
-
-                const regenStyle = document.getElementById('regen-style');
-                if (regenStyle) regenStyle.value = origStyle;
-
-                const regenBoost = document.getElementById('regen-boost');
-                if (regenBoost) regenBoost.checked = origBoost === 'true';
             } else {
                 step4AudioPlayerContainer.classList.add('hidden');
+                document.getElementById('step5-video-container').classList.add('hidden');
             }
         } else {
             step3AudioContainer.classList.add('hidden');
+            document.getElementById('step5-video-container').classList.add('hidden');
+        }
+
+        if (data.total_stats) {
+            document.getElementById('total-stats').innerHTML = formatTotalStats(data.total_stats);
         }
 
         const resultLinkContainer = document.getElementById('result-link-container');
@@ -518,6 +738,10 @@ async function sendQuery() {
         }
 
     } catch (error) {
+        if (error.name === 'AbortError') {
+            console.log('Fetch aborted because user switched tabs');
+            return;
+        }
         showError(error.message);
     } finally {
         submitBtn.disabled = false;

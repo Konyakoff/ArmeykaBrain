@@ -46,7 +46,73 @@
     <!-- Marked.js for Markdown parsing -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v=3.1">
+    <!-- Критические стили выбора аватара в HTML: не зависят от кэша style.css и Tailwind CDN -->
+    <style>
+        #avatar-modal-grid.ab-avatar-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+            gap: 12px;
+            padding: 16px;
+            overflow-y: auto;
+            flex: 1 1 auto;
+            min-height: 0;
+            max-height: min(72vh, 640px);
+            background: #f9fafb;
+            -webkit-overflow-scrolling: touch;
+        }
+        .ab-avatar-cell {
+            display: flex;
+            flex-direction: column;
+            margin: 0;
+            padding: 0;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            cursor: pointer;
+            background: #fff;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+            text-align: left;
+            font: inherit;
+            color: inherit;
+            overflow: hidden;
+            min-width: 0;
+            flex-shrink: 0;
+        }
+        .ab-avatar-cell:hover { border-color: #F47920; }
+        .ab-avatar-cell--selected {
+            border-color: #F47920;
+            box-shadow: 0 0 0 3px rgba(244, 121, 32, 0.35);
+        }
+        /* Фиксированная высота: в flex-колонке aspect-ratio часто даёт 0px */
+        .ab-avatar-thumb {
+            width: 100%;
+            height: 140px;
+            min-height: 140px;
+            flex-shrink: 0;
+            background: #e5e7eb;
+            position: relative;
+            overflow: hidden;
+        }
+        .ab-avatar-img {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            object-position: top center;
+        }
+        .ab-avatar-label {
+            padding: 8px 6px;
+            font-size: 11px;
+            font-weight: 600;
+            line-height: 1.25;
+            color: #374151;
+            text-align: center;
+            min-height: 2.75em;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+    </style>
     {% block extra_head %}{% endblock %}
 </head>
 <body class="text-brand-dark min-h-screen relative overflow-x-hidden">
@@ -79,8 +145,25 @@
 
     </div>
 
-    <script src="/static/js/ui.js"></script>
-    <script src="/static/js/api.js"></script>
+    <!-- Global Avatar Modal -->
+    <div id="avatar-modal" class="fixed inset-0 z-[100] hidden bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 opacity-0 transition-opacity duration-300">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col transform scale-95 transition-transform duration-300" id="avatar-modal-content">
+            <!-- Header -->
+            <div class="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 rounded-t-2xl">
+                <h3 class="text-lg font-bold text-gray-800">Выберите аватар</h3>
+                <button onclick="closeAvatarModal()" class="text-gray-400 hover:text-red-500 transition-colors">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            <!-- Body (Grid) -->
+            <div id="avatar-modal-grid" class="ab-avatar-grid custom-scrollbar">
+                <!-- Avatars: заполняются через DOM API + ab-*.css (Tailwind в innerHTML не работает с CDN) -->
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/ui.js?v=3.0"></script>
+    <script src="/static/js/api.js?v=3.0"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

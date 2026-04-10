@@ -19,6 +19,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 ).join('');
                 const regenVoice = document.getElementById('regen-voice');
                 if (regenVoice) regenVoice.innerHTML = voiceOptions;
+                const upgradeVoice = document.getElementById('upgrade-voice');
+                if (upgradeVoice) upgradeVoice.innerHTML = voiceOptions;
             }
         }
     } catch(e) { console.error('Failed to load config voices', e); }
@@ -37,7 +39,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('res-question').textContent = data.question;
 
         document.getElementById('step1-info').innerHTML = formatStep1Info(data.step1_info);
+        if (data.step1_stats) document.getElementById('step1-stats').innerHTML = formatStats(data.step1_stats, 1);
+        
         document.getElementById('final-answer').innerHTML = marked.parse(data.answer);
+        if (data.step2_stats) document.getElementById('step2-stats').innerHTML = formatStats(data.step2_stats, 2);
+
+        if (data.total_stats) document.getElementById('total-stats').innerHTML = formatTotalStats(data.total_stats);
 
         const step3AudioContainer = document.getElementById('step3-audio-container');
         const step3AudioText = document.getElementById('step3-audio-text');
@@ -45,10 +52,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         const step4AudioPlayer = document.getElementById('step4-audio-player');
         const step4AudioSource = document.getElementById('step4-audio-source');
         const step4AudioBadge = document.getElementById('step4-audio-badge');
+        const upgradeAudioContainer = document.getElementById('upgrade-audio-container');
         
         if (data.step3_audio) {
+            if (upgradeAudioContainer) upgradeAudioContainer.classList.add('hidden');
             step3AudioContainer.classList.remove('hidden');
             step3AudioText.innerHTML = marked.parse(data.step3_audio);
+            if (data.step3_stats) document.getElementById('step3-stats').innerHTML = formatStats(data.step3_stats, 3);
             
             let origWpm = 'N/A';
             let origDuration = 'N/A';
@@ -79,76 +89,78 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (data.step4_audio_url) {
                 step4AudioPlayerContainer.classList.remove('hidden');
                 step4AudioSource.src = data.step4_audio_url;
-                document.getElementById('step4-audio-download').href = data.step4_audio_url;
+                document.getElementById('step4-audio-download').href = data.step4_audio_url_original || data.step4_audio_url;
                 step4AudioPlayer.load();
                 
-                let origModel = 'N/A', origVoiceId = 'N/A', origVoiceName = 'N/A', origWpm = 'N/A', origSpeed = 'N/A';
-                let origStability = '0.5', origSimilarity = '0.75', origStyle = '0.25', origBoost = 'true';
-                const m1 = data.answer.match(/Модель: (.+)/);
-                if (m1) origModel = m1[1].trim();
-                const m2 = data.answer.match(/Диктор ID: (.+)/);
-                if (m2) origVoiceId = m2[1].trim();
-                const m_name = data.answer.match(/Диктор Имя: (.+)/);
-                if (m_name) {
-                    origVoiceName = m_name[1].trim().split('-')[0].trim();
-                } else if (origVoiceId !== 'N/A') {
-                    origVoiceName = origVoiceId.substring(0,8) + '...';
+                // Add video generation block
+                const videoBlockId = 'video-upgrade-main';
+                let videoBlockContainer = document.getElementById(videoBlockId);
+                if (!videoBlockContainer) {
+                    videoBlockContainer = document.createElement('div');
+                    videoBlockContainer.id = videoBlockId;
+                    step4AudioPlayerContainer.insertBefore(videoBlockContainer, document.getElementById('evaluation-result-container'));
                 }
-                const m3 = data.answer.match(/Скорость: (.+) \((.+) слов\/мин\)/);
-                if (m3) {
-                    origSpeed = m3[1].trim();
-                    origWpm = m3[2].trim();
-                }
-                const m_stab = data.answer.match(/Stability: (.+)/);
-                if (m_stab) origStability = m_stab[1].trim();
-                const m_sim = data.answer.match(/Similarity: (.+)/);
-                if (m_sim) origSimilarity = m_sim[1].trim();
-                const m_style = data.answer.match(/Style: (.+)/);
-                if (m_style) origStyle = m_style[1].trim();
-                const m_boost = data.answer.match(/Speaker Boost: (.+)/);
-                if (m_boost) origBoost = m_boost[1].trim();
+                videoBlockContainer.innerHTML = renderVideoUpgradeBlock('main', data.step4_audio_url_original || data.step4_audio_url, true);
                 
-                let displayCost = '';
-                const m4 = data.answer.match(/Символов: \d+ \(\$([0-9]+\.[0-9]+)\)/);
-                if (m4 && m4[1]) {
-                    displayCost = ` | Цена: $${m4[1]}`;
-                } else if (data.step4_cost) {
-                    displayCost = ` | Цена: $${parseFloat(data.step4_cost).toFixed(3)}`;
-                }
                 
-                if (step4AudioBadge) {
-                    step4AudioBadge.innerHTML = `<span class="text-xs font-semibold px-2 py-1 bg-purple-100 text-purple-700 rounded-md block w-fit mb-3 border border-purple-200 shadow-sm">${origModel} | Voice: ${origVoiceName} | ${origWpm} сл/мин | Speed: ${origSpeed} | Stability: ${origStability} | Similarity: ${origSimilarity} | Style: ${origStyle} | Boost: ${origBoost}${displayCost}</span>`;
-                }
-                
-                const regenModel = document.getElementById('regen-model');
-                if (regenModel && origModel !== 'N/A') regenModel.value = origModel;
-                
-                const regenVoice = document.getElementById('regen-voice');
-                if (regenVoice && origVoiceId !== 'N/A') {
-                    if ([...regenVoice.options].some(o => o.value === origVoiceId)) {
-                        regenVoice.value = origVoiceId;
+                if (data.step4_stats) {
+                    const stats = data.step4_stats;
+                    const origModel = stats.model || 'N/A';
+                    const origVoiceId = stats.voice_id || 'N/A';
+                    const origVoiceName = stats.voice_name || 'N/A';
+                    const origWpm = stats.wpm || '150';
+                    const origSpeed = stats.speed ? parseFloat(stats.speed).toFixed(2) : '1.00';
+                    const origStability = stats.stability !== undefined ? stats.stability : '0.5';
+                    const origSimilarity = stats.similarity !== undefined ? stats.similarity : '0.75';
+                    const origStyle = stats.style !== undefined ? stats.style : '0.25';
+                    const origBoost = stats.speaker_boost !== undefined ? stats.speaker_boost.toString() : 'true';
+                    const displayCost = stats.total_cost ? ` | Цена: $${parseFloat(stats.total_cost).toFixed(3)}` : '';
+                    
+                    const savedModel = localStorage.getItem('elevenlabsModel');
+                    const regenModel = document.getElementById('regen-model');
+                    if (regenModel) regenModel.value = savedModel || (origModel !== 'N/A' ? origModel : 'eleven_v3');
+                    
+                    const savedVoice = localStorage.getItem('elevenlabsVoice');
+                    const regenVoice = document.getElementById('regen-voice');
+                    if (regenVoice) {
+                        let vToSet = savedVoice || origVoiceId;
+                        if (vToSet !== 'N/A' && [...regenVoice.options].some(o => o.value === vToSet)) {
+                            regenVoice.value = vToSet;
+                        }
+                    }
+                    
+                    const savedWpm = localStorage.getItem('audioWpm');
+                    const regenWpm = document.getElementById('regen-wpm');
+                    if (regenWpm) {
+                        let wpmToSet = savedWpm || (origWpm !== 'N/A' ? origWpm : '150');
+                        let clampedWpm = Math.max(105, Math.min(parseInt(wpmToSet), 180));
+                        regenWpm.value = clampedWpm;
+                        const regenWpmVal = document.getElementById('regen-wpm-val');
+                        if (regenWpmVal) regenWpmVal.innerText = clampedWpm;
+                    }
+
+                    const savedStability = localStorage.getItem('audioStability');
+                    const regenStability = document.getElementById('regen-stability');
+                    if (regenStability) regenStability.value = savedStability || origStability;
+
+                    const savedSimilarity = localStorage.getItem('audioSimilarity');
+                    const regenSimilarity = document.getElementById('regen-similarity');
+                    if (regenSimilarity) regenSimilarity.value = savedSimilarity || origSimilarity;
+
+                    const savedStyle = localStorage.getItem('audioStyle');
+                    const regenStyle = document.getElementById('regen-style');
+                    if (regenStyle) regenStyle.value = savedStyle || origStyle;
+
+                    const savedBoost = localStorage.getItem('useSpeakerBoost');
+                    const regenBoost = document.getElementById('regen-boost');
+                    if (regenBoost) regenBoost.checked = savedBoost !== null ? savedBoost === 'true' : (origBoost === 'true');
+                    
+                    document.getElementById('step4-stats').innerHTML = formatStats(data.step4_stats, 4);
+                    
+                    if (step4AudioBadge) {
+                        step4AudioBadge.classList.add('hidden'); // hide old badge
                     }
                 }
-                
-                const regenWpm = document.getElementById('regen-wpm');
-                if (regenWpm && origWpm !== 'N/A') {
-                    let clampedWpm = Math.max(105, Math.min(parseInt(origWpm), 180));
-                    regenWpm.value = clampedWpm;
-                    const regenWpmVal = document.getElementById('regen-wpm-val');
-                    if (regenWpmVal) regenWpmVal.innerText = clampedWpm;
-                }
-
-                const regenStability = document.getElementById('regen-stability');
-                if (regenStability) regenStability.value = origStability;
-
-                const regenSimilarity = document.getElementById('regen-similarity');
-                if (regenSimilarity) regenSimilarity.value = origSimilarity;
-
-                const regenStyle = document.getElementById('regen-style');
-                if (regenStyle) regenStyle.value = origStyle;
-
-                const regenBoost = document.getElementById('regen-boost');
-                if (regenBoost) regenBoost.checked = origBoost === 'true';
                 
                 if (data.evaluation_main) {
                     document.getElementById('evaluation-result-container').classList.remove('hidden');
@@ -267,9 +279,46 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 </div>
                                 
                                 ${evalBlock}
+                                
+                                <div id="video-wrapper-${uniqueId}">
+                                    <!-- Видео блок рендерится здесь -->
+                                </div>
                             </div>
                         `;
                         container.appendChild(div);
+                        
+                        const videoWrapper = document.getElementById(`video-wrapper-${uniqueId}`);
+                        if (audio.video_id) {
+                            videoWrapper.innerHTML = `
+                                <div class="mt-4 pt-4 border-t border-gray-100">
+                                    <div id="video-result-container-${uniqueId}"></div>
+                                </div>
+                            `;
+                            const resultContainer = document.getElementById(`video-result-container-${uniqueId}`);
+                            if (audio.video_url) {
+                                resultContainer.innerHTML = `
+                                    <div class="flex flex-col gap-2">
+                                        <video controls class="max-h-[50vh] w-auto max-w-full rounded-lg shadow border border-indigo-100" style="object-fit: contain;">
+                                            <source src="${audio.video_url}" type="video/mp4">
+                                            Ваш браузер не поддерживает видео.
+                                        </video>
+                                        <a href="${audio.video_url}" download target="_blank" class="mt-2 text-center text-sm font-medium text-indigo-600 hover:text-indigo-800">
+                                            <i class="fas fa-download"></i> Скачать видео
+                                        </a>
+                                    </div>
+                                `;
+                            } else {
+                                resultContainer.innerHTML = `
+                                    <div class="flex flex-col items-center gap-3 w-full bg-gray-50 rounded-xl p-6 border border-dashed border-gray-300">
+                                        <i class="fas fa-spinner fa-spin text-3xl text-indigo-500 mb-2"></i>
+                                        <p class="text-brand-dark font-medium text-sm text-center">Видео генерируется...</p>
+                                    </div>
+                                `;
+                                pollSpecificVideo(audio.video_id, uniqueId, window.currentSlug, false);
+                            }
+                        } else {
+                            videoWrapper.innerHTML = renderVideoUpgradeBlock(uniqueId, audio.audio_url_original || audio.audio_url, false);
+                        }
                     });
                 }
             } else {
@@ -277,9 +326,295 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         } else {
             step3AudioContainer.classList.add('hidden');
+            if (data.tab_type === 'text') {
+                if (upgradeAudioContainer) {
+                    upgradeAudioContainer.classList.remove('hidden');
+                    
+                    const savedDuration = localStorage.getItem('audioDuration');
+                    if (savedDuration) document.getElementById('upgrade-duration').value = savedDuration;
+                    
+                    const savedWpm = localStorage.getItem('audioWpm');
+                    const upgradeWpm = document.getElementById('upgrade-wpm');
+                    if (upgradeWpm && savedWpm) {
+                        let clampedWpm = Math.max(105, Math.min(parseInt(savedWpm), 180));
+                        upgradeWpm.value = clampedWpm;
+                        const upgradeWpmVal = document.getElementById('upgrade-wpm-val');
+                        if (upgradeWpmVal) upgradeWpmVal.innerText = clampedWpm;
+                    }
+
+                    const savedModel = localStorage.getItem('elevenlabsModel');
+                    if (savedModel) document.getElementById('upgrade-model').value = savedModel;
+
+                    const savedVoice = localStorage.getItem('elevenlabsVoice');
+                    const upgradeVoice = document.getElementById('upgrade-voice');
+                    if (upgradeVoice && savedVoice && [...upgradeVoice.options].some(o => o.value === savedVoice)) {
+                        upgradeVoice.value = savedVoice;
+                    }
+
+                    const savedStyle = localStorage.getItem('audioStyle');
+                    if (savedStyle) document.getElementById('upgrade-style').value = savedStyle;
+
+                    const savedStability = localStorage.getItem('audioStability');
+                    if (savedStability) document.getElementById('upgrade-stability').value = savedStability;
+
+                    const savedSimilarity = localStorage.getItem('audioSimilarity');
+                    if (savedSimilarity) document.getElementById('upgrade-similarity').value = savedSimilarity;
+
+                    const savedBoost = localStorage.getItem('useSpeakerBoost');
+                    if (savedBoost !== null) document.getElementById('upgrade-boost').checked = savedBoost === 'true';
+                    
+                    const upgradeVideoCb = document.getElementById('upgrade-video');
+                    const upgradeAvatarContainer = document.getElementById('upgrade-avatar-container');
+                    if (upgradeVideoCb && upgradeAvatarContainer) {
+                        upgradeVideoCb.addEventListener('change', (e) => {
+                            if (e.target.checked) {
+                                upgradeAvatarContainer.style.display = 'flex';
+                            } else {
+                                upgradeAvatarContainer.style.display = 'none';
+                            }
+                        });
+                        
+                        // Загрузим список аватаров
+                        fetch('/api/config').then(res => res.json()).then(cfg => {
+                            if (cfg.avatars && cfg.avatars.length > 0) {
+                                windowAvatars = cfg.avatars;
+                                const savedAvatar = localStorage.getItem('heygenAvatar') || cfg.default_avatar;
+                                const savedVideoFormat = localStorage.getItem('videoFormat') || '16:9';
+                                
+                                const formatElem = document.getElementById('upgrade-video-format');
+                                if (formatElem) {
+                                    formatElem.value = savedVideoFormat;
+                                    formatElem.addEventListener('change', (e) => {
+                                        updateAvatarButtonText('upgrade-avatar', 'upgrade-avatar-btn', 'upgrade-video-format');
+                                        updateAvatarStyleHint('upgrade-video-format', 'upgrade-avatar-style', 'upgrade-avatar-style-hint');
+                                    });
+                                }
+                                
+                                // Восстанавливаем сохранённый стиль кадрирования
+                                const savedAvatarStyle = localStorage.getItem('avatarStyle') || 'auto';
+                                const upgradeStyleElem = document.getElementById('upgrade-avatar-style');
+                                if (upgradeStyleElem) upgradeStyleElem.value = savedAvatarStyle;
+                                updateAvatarStyleHint('upgrade-video-format', 'upgrade-avatar-style', 'upgrade-avatar-style-hint');
+                                
+                                updateAvatarButtonText('upgrade-avatar', 'upgrade-avatar-btn', 'upgrade-video-format');
+                                
+                                const savedHeygenEngine = localStorage.getItem('heygenEngine');
+                                if (savedHeygenEngine) {
+                                    const engineElem = document.getElementById('upgrade-heygen-engine');
+                                    if (engineElem) engineElem.value = savedHeygenEngine;
+                                }
+                            }
+                        }).catch(e => console.error("Error loading config for upgrade:", e));
+                    }
+                }
+            }
+        }
+        
+        if (data.step5_video_id || data.step5_video_url) {
+            const step5VideoContainer = document.getElementById('step5-video-container');
+            const step5VideoContent = document.getElementById('step5-video-content');
+            if (step5VideoContainer) {
+                step5VideoContainer.classList.remove('hidden');
+                
+                if (data.step5_stats) {
+                    document.getElementById('step5-stats').innerHTML = formatStats(data.step5_stats, 5);
+                }
+                
+                if (data.step5_video_url) {
+                    step5VideoContent.innerHTML = `
+                                    <video controls class="max-h-[70vh] w-auto max-w-full mx-auto rounded-xl shadow-lg border-2 border-indigo-200" style="object-fit: contain;">
+                                        <source src="${data.step5_video_url}" type="video/mp4">
+                                        Ваш браузер не поддерживает видео.
+                                    </video>
+                        <div class="mt-4 flex gap-4">
+                            <a href="${data.step5_video_url}" download target="_blank" class="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-6 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2">
+                                <i class="fas fa-download"></i> Скачать видео
+                            </a>
+                        </div>
+                    `;
+                } else {
+                    // Poll
+                    step5VideoContent.innerHTML = `
+                        <div class="flex flex-col items-center gap-3 w-full">
+                            <div class="bg-gray-100 rounded-xl p-8 flex flex-col items-center justify-center w-full max-w-2xl border-2 border-dashed border-gray-300">
+                                <i class="fas fa-spinner fa-spin text-4xl text-indigo-500 mb-4"></i>
+                                <p class="text-brand-dark font-medium text-center">Видео генерируется...</p>
+                                <p class="text-sm text-gray-500 text-center mt-2">Это может занять несколько минут. Вы можете закрыть страницу и проверить позже по этой же ссылке.</p>
+                            </div>
+                        </div>
+                    `;
+                    const pollVideo = async () => {
+                        try {
+                            const res = await fetch(`/api/video_status?video_id=${data.step5_video_id}`);
+                            const stData = await res.json();
+                            
+                            if (stData.status === "completed" && stData.video_url) {
+                                if (data.step5_stats && data.step5_stats.started_at) {
+                                    data.step5_stats.generation_time_sec = Math.floor(Date.now() / 1000) - data.step5_stats.started_at;
+                                    document.getElementById('step5-stats').innerHTML = formatStats(data.step5_stats, 5);
+                                }
+                                
+                                step5VideoContent.innerHTML = `
+                                    <video controls class="max-h-[70vh] w-auto max-w-full mx-auto rounded-xl shadow-lg border-2 border-indigo-200" style="object-fit: contain;">
+                                        <source src="${stData.video_url}" type="video/mp4">
+                                        Ваш браузер не поддерживает видео.
+                                    </video>
+                                    <div class="mt-4 flex gap-4">
+                                        <a href="${stData.video_url}" download target="_blank" class="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-6 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2">
+                                            <i class="fas fa-download"></i> Скачать видео
+                                        </a>
+                                    </div>
+                                `;
+                                fetch('/api/update_video_result', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ slug: window.currentSlug, video_url: stData.video_url })
+                                });
+                            } else if (stData.status === "failed" || stData.status === "error") {
+                                step5VideoContent.innerHTML = `
+                                    <div class="bg-red-50 text-red-600 p-6 rounded-xl w-full max-w-2xl border border-red-200 text-center">
+                                        <i class="fas fa-exclamation-triangle text-3xl mb-2"></i>
+                                        <p class="font-bold">Ошибка генерации видео</p>
+                                        <p class="text-sm mt-1">${stData.error || 'Неизвестная ошибка'}</p>
+                                    </div>
+                                `;
+                            } else {
+                                setTimeout(pollVideo, 5000);
+                            }
+                        } catch (e) {
+                            setTimeout(pollVideo, 5000);
+                        }
+                    };
+                    pollVideo();
+                }
+            }
         }
 
     } catch(e) {
         showError(e.message);
     }
 });
+
+async function upgradeToAudio() {
+    const duration = document.getElementById('upgrade-duration').value;
+    const wpm = document.getElementById('upgrade-wpm').value;
+    const model = document.getElementById('upgrade-model').value;
+    const voice = document.getElementById('upgrade-voice').value;
+    const style = document.getElementById('upgrade-style').value;
+    const stability = document.getElementById('upgrade-stability').value;
+    const similarity = document.getElementById('upgrade-similarity').value;
+    const boost = document.getElementById('upgrade-boost').checked;
+    const generateVideo = document.getElementById('upgrade-video') ? document.getElementById('upgrade-video').checked : false;
+    const avatar = document.getElementById('upgrade-avatar') ? document.getElementById('upgrade-avatar').value : 'Abigail_standing_office_front';
+    const videoFormat = document.getElementById('upgrade-video-format') ? document.getElementById('upgrade-video-format').value : '16:9';
+    const heygenEngine = document.getElementById('upgrade-heygen-engine') ? document.getElementById('upgrade-heygen-engine').value : 'avatar_iv';
+    const upgradeAvatarStyleEl = document.getElementById('upgrade-avatar-style');
+    const upgradeAvatarStyle = upgradeAvatarStyleEl ? upgradeAvatarStyleEl.value : 'auto';
+    
+    // Сохраняем в localStorage
+    localStorage.setItem('audioDuration', duration);
+    localStorage.setItem('audioWpm', wpm);
+    localStorage.setItem('elevenlabsModel', model);
+    localStorage.setItem('elevenlabsVoice', voice);
+    localStorage.setItem('audioStyle', style);
+    localStorage.setItem('audioStability', stability);
+    localStorage.setItem('audioSimilarity', similarity);
+    localStorage.setItem('useSpeakerBoost', boost);
+    if(generateVideo) {
+        localStorage.setItem('heygenAvatar', avatar);
+        localStorage.setItem('videoFormat', videoFormat);
+        localStorage.setItem('heygenEngine', heygenEngine);
+        localStorage.setItem('avatarStyle', upgradeAvatarStyle);
+    }
+    
+    if (!window.currentSlug) return;
+    
+    const btn = document.getElementById('btn-upgrade-audio');
+    const loadingBlock = document.getElementById('upgrade-loading');
+    const statusText = document.getElementById('upgrade-status-text');
+    
+    btn.disabled = true;
+    btn.classList.add('opacity-50', 'cursor-not-allowed');
+    loadingBlock.classList.remove('hidden');
+    statusText.innerText = "Инициализация...";
+    
+    try {
+        const response = await fetch('/api/upgrade_to_audio', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                slug: window.currentSlug,
+                audio_duration: parseInt(duration),
+                audio_wpm: parseInt(wpm),
+                elevenlabs_model: model,
+                elevenlabs_voice: voice,
+                audio_style: parseFloat(style),
+                audio_stability: parseFloat(stability),
+                audio_similarity_boost: parseFloat(similarity),
+                use_speaker_boost: boost,
+                generate_video: generateVideo,
+                heygen_avatar_id: avatar,
+                video_format: videoFormat,
+                heygen_engine: heygenEngine,
+                avatar_style: upgradeAvatarStyle
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Ошибка сети: ${response.status}`);
+        }
+        
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let done = false;
+        let buffer = '';
+        
+        while (!done) {
+            const { value, done: readerDone } = await reader.read();
+            done = readerDone;
+            if (value) {
+                buffer += decoder.decode(value, { stream: true });
+                const blocks = buffer.split(/\r?\n\r?\n/);
+                buffer = blocks.pop(); // Keep incomplete block
+                
+                for (const block of blocks) {
+                    const lines = block.split(/\r?\n/);
+                    let dataJson = null;
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const jsonStr = line.substring(6).trim();
+                            if (jsonStr) {
+                                try {
+                                    dataJson = JSON.parse(jsonStr);
+                                } catch (e) {
+                                    console.error('Ошибка парсинга JSON SSE:', e, jsonStr);
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (dataJson) {
+                        if (dataJson.message) {
+                            statusText.innerText = dataJson.message;
+                        }
+                        if (dataJson.step === 'done') {
+                            statusText.innerText = "Готово! Обновляю страницу...";
+                            setTimeout(() => {
+                                window.location.reload();
+                            }, 1000);
+                        } else if (dataJson.step === 'error') {
+                            throw new Error(dataJson.message || "Неизвестная ошибка");
+                        }
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        statusText.innerText = "Ошибка: " + e.message;
+        statusText.classList.remove('text-purple-700');
+        statusText.classList.add('text-red-500');
+        btn.disabled = false;
+        btn.classList.remove('opacity-50', 'cursor-not-allowed');
+    }
+}

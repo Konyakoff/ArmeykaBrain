@@ -1,4 +1,6 @@
 import os
+import re
+import time
 import asyncio
 import logging
 import json
@@ -22,10 +24,10 @@ logging.basicConfig(
 logger = logging.getLogger("api")
 
 from app.core.config import settings
-from app.core.exceptions import APIError, NotFoundError, ExternalAPIError, api_error_handler, global_exception_handler
+from app.core.exceptions import APIError, NotFoundError, ExternalAPIError, ValidationError, api_error_handler, global_exception_handler
 from app.services.data_loader import GEMINI_MODELS
 from app.db.database import init_db, get_db_path, log_message, get_recent_results, get_result_by_slug, add_additional_audio, save_main_evaluation, save_additional_evaluation
-from app.services.core import process_query_logic
+from app.services.core import process_query_logic, process_upgrade_to_audio_logic
 from app.services.elevenlabs_service import generate_audio, get_elevenlabs_voices
 from app.services.gemini_service import evaluate_audio_quality
 
@@ -49,7 +51,21 @@ app.add_middleware(
 # Монтируем папку static для раздачи статических файлов (фронтенда)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+_AVATAR_PREVIEW_DIR = os.path.join("static", "img", "avatars")
+_AVATAR_ID_SAFE = re.compile(r"^[a-zA-Z0-9_]+$")
+
 templates = Jinja2Templates(directory="templates")
+
+
+@app.get("/api/avatar-preview/{avatar_id}")
+async def get_avatar_preview(avatar_id: str):
+    """Отдаёт локальный превью-кадр аватара HeyGen (webp). Надёжнее, чем полагаться на Tailwind в динамическом HTML."""
+    if not _AVATAR_ID_SAFE.match(avatar_id):
+        raise NotFoundError(message="Некорректный идентификатор аватара")
+    path = os.path.join(_AVATAR_PREVIEW_DIR, f"{avatar_id}.webp")
+    if not os.path.isfile(path):
+        raise NotFoundError(message="Превью аватара не найдено")
+    return FileResponse(path, media_type="image/webp")
 
 # Модели Pydantic для валидации входных данных
 class QueryRequest(BaseModel):
@@ -62,21 +78,52 @@ class QueryRequest(BaseModel):
     audio_duration: int = Field(default=30, ge=14, le=300, description="Длительность аудио в секундах")
     tab_type: str = Field(default="text", description="Тип вкладки (text или audio)")
     elevenlabs_model: str = Field(default="eleven_v3", description="Модель ElevenLabs для озвучки")
-    audio_wpm: int = Field(default=175, ge=100, le=250, description="Слов в минуту")
+    audio_wpm: int = Field(default=150, ge=100, le=250, description="Слов в минуту")
     elevenlabs_voice: str = Field(default="FGY2WhTYpPnroxEErjIq", description="Голос ElevenLabs")
     audio_style: float = Field(default=0.25, ge=0.0, le=1.0, description="Стиль (Style)")
     use_speaker_boost: bool = Field(default=True, description="Использовать Speaker Boost")
+    audio_stability: float = Field(default=0.5, ge=0.0, le=1.0, description="Stability")
+    audio_similarity_boost: float = Field(default=0.75, ge=0.0, le=1.0, description="Similarity Boost")
+    heygen_avatar_id: str = Field(default="Abigail_standing_office_front", description="ID аватара HeyGen")
+    video_format: str = Field(default="16:9", description="Формат видео: 16:9, 9:16, 1:1")
+    heygen_engine: str = Field(default="avatar_iv", description="Версия движка: avatar_iv, avatar_iii")
+    avatar_style: str = Field(default="auto", description="Стиль кадрирования: auto | normal | closeUp | circle")
 
 class AudioRequest(BaseModel):
     text: str = Field(..., min_length=1, description="Текст для озвучки")
     elevenlabs_model: str = Field(default="eleven_v3", description="Модель ElevenLabs")
     elevenlabs_voice: str = Field(default="FGY2WhTYpPnroxEErjIq", description="Голос ElevenLabs")
-    audio_wpm: int = Field(default=175, ge=100, le=250, description="Скорость в словах в минуту")
+    audio_wpm: int = Field(default=150, ge=100, le=250, description="Скорость в словах в минуту")
     stability: float = Field(default=0.5, ge=0.0, le=1.0, description="Stability")
     similarity_boost: float = Field(default=0.75, ge=0.0, le=1.0, description="Similarity Boost")
     style: float = Field(default=0.25, ge=0.0, le=1.0, description="Style")
     use_speaker_boost: bool = Field(default=True, description="Использовать Speaker Boost")
     slug: str = Field(default=None, description="Slug для привязки к результату")
+
+class UpgradeAudioRequest(BaseModel):
+    slug: str = Field(..., description="Slug результата для апгрейда")
+    audio_duration: int = Field(default=60, ge=14, le=300, description="Длительность аудио в секундах")
+    elevenlabs_model: str = Field(default="eleven_v3", description="Модель ElevenLabs")
+    audio_wpm: int = Field(default=150, ge=100, le=250, description="Скорость в словах в минуту")
+    elevenlabs_voice: str = Field(default="FGY2WhTYpPnroxEErjIq", description="Голос ElevenLabs")
+    audio_style: float = Field(default=0.25, ge=0.0, le=1.0, description="Style")
+    use_speaker_boost: bool = Field(default=True, description="Speaker Boost")
+    audio_stability: float = Field(default=0.5, ge=0.0, le=1.0, description="Stability")
+    audio_similarity_boost: float = Field(default=0.75, ge=0.0, le=1.0, description="Similarity Boost")
+    generate_video: bool = Field(default=False, description="Создать также видео (Шаг 5)")
+    heygen_avatar_id: str = Field(default="Abigail_standing_office_front", description="ID аватара HeyGen")
+    video_format: str = Field(default="16:9", description="Формат видео: 16:9, 9:16, 1:1")
+    heygen_engine: str = Field(default="avatar_iv", description="Версия движка: avatar_iv, avatar_iii")
+    avatar_style: str = Field(default="auto", description="Стиль кадрирования: auto | normal | closeUp | circle")
+
+class GenerateVideoRequest(BaseModel):
+    slug: str = Field(..., description="Slug результата")
+    audio_url: str = Field(..., description="Путь до аудиофайла")
+    heygen_engine: str = Field(default="avatar_iv", description="Версия движка HeyGen")
+    video_format: str = Field(default="16:9", description="Формат видео")
+    heygen_avatar_id: str = Field(..., description="ID аватара HeyGen")
+    avatar_style: str = Field(default="auto", description="Стиль кадрирования: auto | normal | closeUp | circle")
+    is_main: bool = Field(default=True, description="Является ли это основным аудио")
 
 class EvaluateRequest(BaseModel):
     audio_url: str = Field(..., description="Путь до аудиофайла")
@@ -97,11 +144,45 @@ async def startup_event():
     print("API сервер запущен. База данных инициализирована.")
 
 @app.get("/", response_class=HTMLResponse)
+@app.get("/text", response_class=HTMLResponse)
+@app.get("/audio", response_class=HTMLResponse)
+@app.get("/video", response_class=HTMLResponse)
 async def read_index(request: Request):
     # Возвращаем шаблон index.html
     return templates.TemplateResponse(request=request, name="index.html")
 
 from app.core.prompt_manager import PromptManager
+
+from app.services.heygen_service import get_heygen_avatars, check_video_status
+
+@app.get("/api/video_status")
+async def check_heygen_video(video_id: str):
+    """
+    Эндпоинт для проверки статуса видео
+    """
+    try:
+        status_data = await check_video_status(video_id)
+        # Если завершено, нужно сохранить в БД (или фронт это запросит, но лучше здесь обновить)
+        # Для простоты фронт будет пулить и при успехе сам может вызвать endpoint или мы обновим прямо тут
+        # Но чтобы обновить тут нужен slug. Пусть фронт шлет slug.
+        return status_data
+    except Exception as e:
+        logger.error(f"Error checking video status: {e}")
+        return {"status": "error", "error": str(e)}
+
+@app.post("/api/update_video_result")
+async def update_video_result(req: dict):
+    from app.db.database import update_result_with_video_status, update_additional_video_url
+    if "slug" in req and "video_url" in req:
+        is_main = req.get("is_main", True)
+        if is_main:
+            update_result_with_video_status(req["slug"], req["video_url"])
+        else:
+            video_id = req.get("video_id")
+            if video_id:
+                update_additional_video_url(req["slug"], video_id, req["video_url"])
+        return {"success": True}
+    return {"success": False}
 
 @app.get("/api/config")
 async def get_config():
@@ -112,14 +193,21 @@ async def get_config():
     models = [{"id": m["model_name"], "name": m["model_name"]} for m in GEMINI_MODELS]
     styles = [{"id": s, "name": s} for s in styles_data.keys()]
     voices = await get_elevenlabs_voices()
+    avatars_raw = await get_heygen_avatars()
+    avatars = [
+        {k: v for k, v in a.items() if not k.startswith("_")}
+        for a in avatars_raw
+    ]
     
     return {
         "models": models,
         "styles": styles,
         "voices": voices,
+        "avatars": avatars,
         "default_model": "gemini-3.1-pro-preview",
         "default_style": "telegram_yur",
-        "default_voice": "FGY2WhTYpPnroxEErjIq"
+        "default_voice": "FGY2WhTYpPnroxEErjIq",
+        "default_avatar": "Abigail_standing_office_front"
     }
 
 @app.post("/api/query")
@@ -150,7 +238,13 @@ async def process_user_query(req: QueryRequest):
             audio_wpm=req.audio_wpm,
             elevenlabs_voice=req.elevenlabs_voice,
             audio_style=req.audio_style,
-            use_speaker_boost=req.use_speaker_boost
+            use_speaker_boost=req.use_speaker_boost,
+            audio_stability=req.audio_stability,
+            audio_similarity_boost=req.audio_similarity_boost,
+            heygen_avatar_id=req.heygen_avatar_id,
+            video_format=req.video_format,
+            heygen_engine=req.heygen_engine,
+            avatar_style=req.avatar_style if hasattr(req, 'avatar_style') else "auto"
         )
     )
     # Сохраняем жесткую ссылку, чтобы сборщик мусора не удалил задачу
@@ -178,6 +272,60 @@ async def process_user_query(req: QueryRequest):
             logger.info("Клиент отключился, но фоновая генерация продолжается.")
         except Exception as e:
             logger.exception("Непредвиденная ошибка генератора")
+            yield {"data": json.dumps({"step": "error", "message": f"Внутренняя ошибка: {str(e)}"}, ensure_ascii=False)}
+
+    return EventSourceResponse(generator())
+
+@app.post("/api/upgrade_to_audio")
+async def upgrade_to_audio(req: UpgradeAudioRequest):
+    """
+    Эндпоинт для апгрейда текстового результата до аудио-сценария и озвучки.
+    """
+    result_data = get_result_by_slug(req.slug)
+    if not result_data:
+        raise NotFoundError("Результат не найден")
+        
+    queue = asyncio.Queue()
+    
+    task = asyncio.create_task(
+        process_upgrade_to_audio_logic(
+            queue=queue,
+            slug=req.slug,
+            raw_answer=result_data["answer"],
+            audio_duration=req.audio_duration,
+            elevenlabs_model=req.elevenlabs_model,
+            audio_wpm=req.audio_wpm,
+            elevenlabs_voice=req.elevenlabs_voice,
+            audio_style=req.audio_style,
+            use_speaker_boost=req.use_speaker_boost,
+            audio_stability=req.audio_stability,
+            audio_similarity_boost=req.audio_similarity_boost,
+            previous_total_cost=result_data.get("total_stats", {}).get("total_cost", 0.0) if isinstance(result_data.get("total_stats"), dict) else 0.0,
+            generate_video=req.generate_video,
+            heygen_avatar_id=req.heygen_avatar_id,
+            video_format=req.video_format,
+            heygen_engine=req.heygen_engine,
+            avatar_style=req.avatar_style if hasattr(req, 'avatar_style') else "auto"
+        )
+    )
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
+    
+    async def generator():
+        try:
+            while True:
+                chunk = await queue.get()
+                if chunk.get("step") == "done":
+                    yield {"data": json.dumps(chunk, ensure_ascii=False)}
+                    break
+                elif chunk.get("step") == "error":
+                    yield {"data": json.dumps(chunk, ensure_ascii=False)}
+                    break
+                yield {"data": json.dumps(chunk, ensure_ascii=False)}
+        except asyncio.CancelledError:
+            logger.info("Клиент отключился, но апгрейд аудио продолжается.")
+        except Exception as e:
+            logger.exception("Непредвиденная ошибка генератора апгрейда")
             yield {"data": json.dumps({"step": "error", "message": f"Внутренняя ошибка: {str(e)}"}, ensure_ascii=False)}
 
     return EventSourceResponse(generator())
@@ -244,6 +392,72 @@ async def process_generate_audio_only(req: AudioRequest):
     except Exception as e:
         logger.exception("Ошибка при генерации дополнительного аудио")
         raise ExternalAPIError(message=f"Ошибка генерации аудио: {str(e)}", service_name="ElevenLabs")
+
+@app.post("/api/generate_video_only")
+async def process_generate_video_only(req: GenerateVideoRequest):
+    """
+    Эндпоинт для генерации дополнительного или основного видео из аудио
+    """
+    from app.services.heygen_service import generate_video_from_audio, calculate_heygen_cost
+    from app.db.database import update_result_with_video, get_result_by_slug
+    try:
+        host_url = "https://armeykabrain.net"
+        public_audio_url = req.audio_url if req.audio_url.startswith("http") else f"{host_url}{req.audio_url}"
+        
+        step5_video_id = await generate_video_from_audio(
+            avatar_id=req.heygen_avatar_id,
+            audio_url=public_audio_url,
+            title="ArmeykaBrain Video",
+            video_format=req.video_format,
+            heygen_engine=req.heygen_engine,
+            avatar_style=req.avatar_style
+        )
+        
+        # Получаем duration_sec для подсчета стоимости. 
+        # Если это доп. аудио, нам надо найти его в базе.
+        # Если это основное, мы можем взять из step4_stats.
+        duration_sec = 60 # дефолт
+        result_data = get_result_by_slug(req.slug)
+        if result_data:
+            if req.is_main:
+                stats = result_data.get("step4_stats", {})
+                if stats and isinstance(stats, dict):
+                    duration_sec = stats.get("duration_sec", 60)
+            else:
+                additional_audios = result_data.get("additional_audios_list", [])
+                for aud in additional_audios:
+                    if aud.get("audio_url") == req.audio_url or aud.get("audio_url_original") == req.audio_url:
+                        # Попробуем вытащить wpm и char_count, если есть. Иначе примерно 60сек.
+                        if "char_count" in aud and "wpm" in aud:
+                            duration_sec = int((aud["char_count"] / 5) / aud["wpm"] * 60)
+                        break
+        
+        step5_cost = calculate_heygen_cost(duration_sec, req.heygen_engine)
+        
+        step5_stats = {
+            "model": "heygen_v2",
+            "avatar_id": req.heygen_avatar_id,
+            "video_id": step5_video_id,
+            "total_cost": step5_cost,
+            "status": "pending",
+            "started_at": int(time.time())
+        }
+        
+        # Сохраняем в БД как pending
+        if req.is_main:
+            update_result_with_video(req.slug, step5_video_id, json.dumps(step5_stats, ensure_ascii=False))
+        else:
+            from app.db.database import save_additional_video_stats
+            save_additional_video_stats(req.slug, req.audio_url, step5_video_id, step5_stats)
+            
+        return {
+            "success": True, 
+            "video_id": step5_video_id,
+            "stats": step5_stats
+        }
+    except Exception as e:
+        logger.exception("Ошибка при генерации видео")
+        raise ExternalAPIError(message=f"Ошибка генерации видео: {str(e)}", service_name="HeyGen")
 
 @app.post("/api/evaluate_audio")
 async def evaluate_audio(req: EvaluateRequest):
@@ -315,10 +529,113 @@ async def get_result_api(slug: str):
 
 @app.get("/text/{slug}", response_class=HTMLResponse)
 async def view_result_page(request: Request, slug: str):
-    """
-    Страница отдельного результата
-    """
     return templates.TemplateResponse(request=request, name="result.html", context={"slug": slug})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TREE API
+# ─────────────────────────────────────────────────────────────────────────────
+
+from app.db.database import (
+    get_tree_nodes, get_tree_node, update_tree_node_title,
+    delete_tree_node_cascade, migrate_saved_result_to_tree,
+    update_tree_node_evaluation
+)
+from app.services.tree_service import dispatch_generate
+
+
+class GenerateNodeRequest(BaseModel):
+    target_type: str = Field(..., description="script | audio | video")
+    params: dict = Field(default_factory=dict)
+
+
+class RenamNodeRequest(BaseModel):
+    title: str
+
+
+@app.get("/api/tree/{slug}")
+async def get_tree(slug: str):
+    """Возвращает все узлы дерева. При первом обращении мигрирует из SavedResult."""
+    nodes = get_tree_nodes(slug)
+    if not nodes:
+        # Автоматическая миграция из старой структуры
+        result_data = get_result_by_slug(slug)
+        if not result_data:
+            raise NotFoundError("Результат не найден")
+        migrate_saved_result_to_tree(slug, result_data)
+        nodes = get_tree_nodes(slug)
+
+    result_data = get_result_by_slug(slug)
+    return {
+        "slug": slug,
+        "question": result_data["question"] if result_data else "",
+        "tab_type": result_data["tab_type"] if result_data else "text",
+        "timestamp": result_data["timestamp"] if result_data else "",
+        "nodes": nodes,
+    }
+
+
+@app.get("/api/tree/node/{node_id}")
+async def get_tree_node_api(node_id: str):
+    node = get_tree_node(node_id)
+    if not node:
+        raise NotFoundError("Узел не найден")
+    return node
+
+
+@app.patch("/api/tree/node/{node_id}/title")
+async def rename_node(node_id: str, req: RenamNodeRequest):
+    ok = update_tree_node_title(node_id, req.title)
+    if not ok:
+        raise NotFoundError("Узел не найден")
+    return {"ok": True}
+
+
+@app.delete("/api/tree/node/{node_id}")
+async def delete_node(node_id: str):
+    node = get_tree_node(node_id)
+    if not node:
+        raise NotFoundError("Узел не найден")
+    if node["node_type"] == "article":
+        raise ValidationError("Корневой узел нельзя удалить")
+    ok = delete_tree_node_cascade(node_id)
+    return {"ok": ok}
+
+
+@app.patch("/api/tree/node/{node_id}/evaluation")
+async def save_node_evaluation(node_id: str, req: dict):
+    ok = update_tree_node_evaluation(node_id, req)
+    return {"ok": ok}
+
+
+@app.post("/api/tree/{slug}/node/{parent_node_id}/generate")
+async def generate_node(slug: str, parent_node_id: str, req: GenerateNodeRequest):
+    """
+    SSE-эндпоинт генерации нового дочернего узла.
+    События: node_created, step N, done / error
+    """
+    queue = asyncio.Queue()
+
+    task = asyncio.create_task(
+        dispatch_generate(queue, slug, parent_node_id, req.target_type, req.params)
+    )
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
+
+    async def generator():
+        try:
+            while True:
+                chunk = await queue.get()
+                yield {"data": json.dumps(chunk, ensure_ascii=False)}
+                if chunk.get("step") in ("done", "error"):
+                    break
+        except asyncio.CancelledError:
+            logger.info("Tree generate client disconnected, background continues")
+        except Exception as e:
+            yield {"data": json.dumps({"step": "error", "message": str(e)}, ensure_ascii=False)}
+
+    return EventSourceResponse(generator())
+
 
 if __name__ == "__main__":
     import uvicorn
