@@ -2,10 +2,14 @@ import os
 import aiohttp
 import uuid
 import subprocess
+import json
+import time
 from app.core.config import settings
 
 # Кэш для голосов, чтобы не запрашивать их каждый раз
 _voices_cache = []
+CACHE_FILE = "db/elevenlabs_voices_cache.json"
+CACHE_TTL = 86400  # 24 часа в секундах
 
 TRANSLATIONS = {
     "female": "женский",
@@ -118,6 +122,17 @@ async def get_elevenlabs_voices() -> list:
     if _voices_cache:
         return _voices_cache
         
+    # Пытаемся загрузить из кэш-файла
+    if os.path.exists(CACHE_FILE):
+        file_age = time.time() - os.path.getmtime(CACHE_FILE)
+        if file_age < CACHE_TTL:
+            try:
+                with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                    _voices_cache = json.load(f)
+                    return _voices_cache
+            except Exception as e:
+                print(f"Ошибка чтения кэша ElevenLabs: {e}")
+
     api_key = settings.elevenlabs_api_key
     if not api_key:
         return []
@@ -162,6 +177,15 @@ async def get_elevenlabs_voices() -> list:
                             "description": desc_str
                         })
                     _voices_cache = extracted
+                    
+                    # Сохраняем в кэш-файл
+                    try:
+                        os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+                        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+                            json.dump(_voices_cache, f, ensure_ascii=False, indent=2)
+                    except Exception as e:
+                        print(f"Ошибка записи кэша ElevenLabs: {e}")
+                        
                     return _voices_cache
     except Exception as e:
         print(f"Error fetching voices: {e}")

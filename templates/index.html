@@ -20,6 +20,9 @@
     <button id="tab-audio" onclick="switchTab('audio')" class="px-6 py-2.5 rounded-xl font-bold transition-all text-gray-500 hover:text-brand-main hover:bg-gray-50 flex items-center gap-2">
         <i class="fas fa-microphone"></i> Audio
     </button>
+    <button id="tab-video" onclick="switchTab('video')" class="px-6 py-2.5 rounded-xl font-bold transition-all text-gray-500 hover:text-brand-main hover:bg-gray-50 flex items-center gap-2">
+        <i class="fas fa-video"></i> Video
+    </button>
 </div>
 
 <!-- Card 1: Настройки -->
@@ -96,6 +99,48 @@
                 <option value="pFZP5JQG7iQjIQuC4Bku">Lily (Загрузка...)</option>
             </select>
         </div>
+        <div class="video-only flex flex-col hidden transition-all duration-300">
+            <label class="text-sm font-semibold text-gray-700 mb-2">Аватар (HeyGen)</label>
+            <!-- Кнопка выбора аватара -->
+            <button type="button" id="heygen-avatar-btn" onclick="openAvatarModal('video-format', 'heygen-avatar', 'heygen-avatar-btn')" class="w-full rounded-xl p-4 text-brand-dark font-medium border-2 flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors bg-white text-left">
+                <i class="fas fa-user-circle text-gray-400"></i> Выбрать аватар...
+            </button>
+            <!-- Скрытый инпут для хранения выбранного ID аватара -->
+            <input type="hidden" id="heygen-avatar" value="Abigail_standing_office_front">
+        </div>
+        <div class="video-only flex flex-col hidden transition-all duration-300">
+            <label class="text-sm font-semibold text-gray-700 mb-2">Версия движка (HeyGen)</label>
+            <select id="heygen-engine" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
+                <option value="avatar_iv">Avatar IV (Digital Twins & Studio Avatars)</option>
+                <option value="avatar_iii">Avatar III (Standard Talking Heads)</option>
+            </select>
+        </div>
+        <div class="video-only flex flex-col hidden transition-all duration-300">
+            <label class="text-sm font-semibold text-gray-700 mb-2">Формат видео</label>
+            <select id="video-format" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
+                <option value="9:16">Вертикальный (9:16) - Reels, Shorts</option>
+                <option value="16:9">Горизонтальный (16:9) - YouTube</option>
+                <option value="1:1">Квадратный (1:1) - Instagram</option>
+            </select>
+        </div>
+        <div class="video-only flex flex-col hidden transition-all duration-300">
+            <label class="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1">
+                Стиль кадрирования
+                <span class="group/tooltip relative cursor-help inline-flex items-center ml-1">
+                    <i class="fas fa-question-circle text-gray-400 transition-colors group-hover/tooltip:text-brand-main"></i>
+                    <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 p-2 bg-gray-800 text-white text-[10px] leading-tight rounded-lg opacity-0 invisible transition-all z-50 pointer-events-none text-center shadow-lg group-hover/tooltip:opacity-100 group-hover/tooltip:visible font-normal">
+                        «Крупный план» — face-centered кроп, идеален для вертикального 9:16. «Авто» выбирает стиль по формату автоматически.
+                    </div>
+                </span>
+            </label>
+            <select id="avatar-style" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
+                <option value="auto">Авто (по формату видео)</option>
+                <option value="normal">Нормальный (весь кадр)</option>
+                <option value="closeUp">Крупный план (лицо + плечи)</option>
+                <option value="circle">Круг</option>
+            </select>
+            <p id="avatar-style-hint" class="text-xs text-indigo-600 mt-1 hidden"><i class="fas fa-info-circle"></i> Для вертикального видео рекомендуется «Крупный план»</p>
+        </div>
         <div class="audio-only flex flex-col hidden transition-all duration-300">
             <label class="text-sm font-semibold text-gray-700 mb-2">Модель озвучки (ElevenLabs)</label>
             <select id="elevenlabs-model" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
@@ -117,6 +162,32 @@
                             </span>
                         </label>
             <input type="number" id="audio-style" min="0" max="1" step="0.05" value="0.25" class="w-full rounded-xl p-4 text-brand-dark font-bold text-lg border-2">
+        </div>
+        
+        <div class="audio-only flex flex-col hidden transition-all duration-300">
+            <label class="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1 relative w-fit">
+                            Stability (0.0 - 1.0)
+                            <span class="group/tooltip relative cursor-help inline-flex items-center ml-1">
+                                <i class="fas fa-question-circle text-gray-400 transition-colors group-hover/tooltip:text-brand-main"></i>
+                                <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-gray-800 text-white text-[10px] leading-tight rounded-lg opacity-0 invisible transition-all z-50 pointer-events-none text-center shadow-lg group-hover/tooltip:opacity-100 group-hover/tooltip:visible font-normal">
+                                    Более высокое значение делает голос более стабильным и предсказуемым, но менее эмоциональным. Низкие значения дают больше эмоций, но могут звучать нестабильно.
+                                </div>
+                            </span>
+                        </label>
+            <input type="number" id="audio-stability" min="0" max="1" step="0.1" value="0.5" class="w-full rounded-xl p-4 text-brand-dark font-bold text-lg border-2">
+        </div>
+
+        <div class="audio-only flex flex-col hidden transition-all duration-300">
+            <label class="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1 relative w-fit">
+                            Similarity Boost (0.0 - 1.0)
+                            <span class="group/tooltip relative cursor-help inline-flex items-center ml-1">
+                                <i class="fas fa-question-circle text-gray-400 transition-colors group-hover/tooltip:text-brand-main"></i>
+                                <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-gray-800 text-white text-[10px] leading-tight rounded-lg opacity-0 invisible transition-all z-50 pointer-events-none text-center shadow-lg group-hover/tooltip:opacity-100 group-hover/tooltip:visible font-normal">
+                                    Высокое значение заставляет голос максимально походить на оригинальный семпл. При слишком высоких значениях может появиться металлический оттенок.
+                                </div>
+                            </span>
+                        </label>
+            <input type="number" id="audio-similarity" min="0" max="1" step="0.05" value="0.75" class="w-full rounded-xl p-4 text-brand-dark font-bold text-lg border-2">
         </div>
 
         <div class="audio-only flex flex-col hidden transition-all duration-300">
@@ -207,6 +278,7 @@
                 Результаты первого этапа (поиск)
             </h2>
             <div id="step1-info" class="step1-body text-gray-800 text-base leading-relaxed"></div>
+            <div id="step1-stats"></div>
         </div>
 
         <!-- Card 4: Экспертное заключение -->
@@ -221,6 +293,7 @@
                 Экспертное заключение
             </h2>
             <div id="final-answer" class="markdown-body text-gray-800 text-base relative z-10"></div>
+            <div id="step2-stats"></div>
         </div>
 
         <!-- Card 5: Скрипт для Аудио (Шаг 3) -->
@@ -240,12 +313,14 @@
                 </div>
             </h2>
             <div id="step3-audio-text" class="markdown-body text-gray-800 text-base relative z-10 mb-6"></div>
+            <div id="step3-stats"></div>
             
             <div id="step4-audio-player-container" class="relative z-10 mt-6 border-t border-purple-200 pt-6 hidden">
                 <h3 class="text-lg font-bold text-brand-dark mb-4 flex items-center gap-2 heading-font">
                     <i class="fas fa-play-circle text-purple-500"></i>
                     Сгенерированная озвучка (ElevenLabs)
                 </h3>
+                <div id="step4-stats"></div>
                 <div id="step4-audio-badge"></div>
                 <div class="flex items-center gap-3 mb-4 w-full">
                     <audio id="step4-audio-player" controls class="flex-1 rounded-xl shadow-sm">
@@ -381,6 +456,25 @@
                 </div>
             </div>
         </div>
+        
+        <!-- Card 6: Сгенерированное видео (Шаг 5) -->
+        <div id="step5-video-container" class="bg-white rounded-[24px] shadow-soft p-6 sm:p-12 relative overflow-hidden border-t-4 border-indigo-500 hidden mt-8">
+            <i class="fas fa-video absolute right-[-5%] top-[-5%] text-[250px] text-gray-50 opacity-50 rotate-12 pointer-events-none"></i>
+            
+            <h2 class="text-2xl font-black text-brand-dark mb-8 flex items-center gap-4 heading-font relative z-10">
+                <div class="w-10 h-10 bg-indigo-500 rounded-[40%_60%_70%_30%/40%_50%_60%_50%] flex items-center justify-center text-white shadow-md">
+                    <i class="fas fa-film text-sm"></i>
+                </div>
+                Сгенерированное видео (HeyGen)
+            </h2>
+            <div id="step5-stats"></div>
+            
+            <div id="step5-video-content" class="relative z-10 mt-4 flex flex-col items-center w-full">
+                <!-- Video will be placed here -->
+            </div>
+        </div>
+        
+        <div id="total-stats"></div>
 
         <!-- Prompts Download -->
         <div id="prompts-container" class="bg-white rounded-[24px] shadow-card p-6 sm:p-8 hidden flex-col sm:flex-row items-start sm:items-center gap-5 border border-gray-50">
@@ -437,5 +531,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/app.js"></script>
+<script src="/static/js/app.js?v=2.5"></script>
 {% endblock %}
