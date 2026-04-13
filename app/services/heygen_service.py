@@ -181,6 +181,104 @@ async def get_heygen_avatars():
         logger.error(f"HeyGen get_avatars error: {e}")
         return []
 
+PRIVATE_AVATARS_CACHE_FILE = "db/heygen_private_avatars_cache.json"
+_private_avatars_cache = None
+
+# Известные личные аватары (жёсткий список; изображения должны быть в static/img/avatars/)
+KNOWN_PRIVATE_AVATARS = [
+    {
+        "avatar_id": "f58b904110e84bedb438ec56fe0104e1",
+        "avatar_name": "Lisa — Армейка (личный, вертикальный)",
+        "gender": "female",
+        "_original_image_url": "https://resource2.heygen.ai/best_frame_selection/candidates/4278b3587b454551bb47c3156c40fe0b.jpg",
+        "preview_image_url": "/api/avatar-preview/f58b904110e84bedb438ec56fe0104e1",
+        "is_horizontal_friendly": False,
+        "is_vertical_friendly": True,
+        "is_square_friendly": True,
+        "is_private": True,
+    },
+    {
+        "avatar_id": "ef720fad85884cc3b9d3352828f1f7e7",
+        "avatar_name": "Лиза (пиджак, горизонтальный)",
+        "gender": "female",
+        "_original_image_url": "https://resource2.heygen.ai/best_frame_selection/candidates/b36d494af2074f20acd8733842fbbc66.jpg",
+        "preview_image_url": "/api/avatar-preview/ef720fad85884cc3b9d3352828f1f7e7",
+        "is_horizontal_friendly": True,
+        "is_vertical_friendly": False,
+        "is_square_friendly": True,
+        "is_private": True,
+    },
+]
+
+async def get_heygen_private_avatars() -> list:
+    """
+    Получает личные (private / talking photo) аватары пользователя через HeyGen API.
+    Использует кэш 24 часа. При ошибке возвращает хардкод KNOWN_PRIVATE_AVATARS.
+    """
+    global _private_avatars_cache
+    if _private_avatars_cache is not None:
+        return _private_avatars_cache
+
+    if os.path.exists(PRIVATE_AVATARS_CACHE_FILE):
+        file_age = time.time() - os.path.getmtime(PRIVATE_AVATARS_CACHE_FILE)
+        if file_age < CACHE_TTL:
+            try:
+                with open(PRIVATE_AVATARS_CACHE_FILE, "r", encoding="utf-8") as f:
+                    _private_avatars_cache = json.load(f)
+                    return _private_avatars_cache
+            except Exception as e:
+                logger.error(f"Ошибка чтения кэша личных аватаров: {e}")
+
+    avatars = []
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Talking photos (портретные ИИ-аватары)
+            async with session.get(
+                f"{HEYGEN_API_URL}/v1/talking_photo.list",
+                headers=HEADERS
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    for item in data.get("data", {}).get("talking_photos", []):
+                        aid = item.get("id") or item.get("talking_photo_id", "")
+                        name = item.get("name") or item.get("talking_photo_name") or aid[:12]
+                        preview = item.get("preview_image_url") or item.get("image_url") or ""
+                        avatars.append({
+                            "avatar_id": aid,
+                            "avatar_name": f"{name} (личный)",
+                            "gender": "unknown",
+                            "_original_image_url": preview,
+                            "preview_image_url": f"/api/avatar-preview/{aid}",
+                            "is_horizontal_friendly": True,
+                            "is_vertical_friendly": True,
+                            "is_square_friendly": True,
+                            "is_private": True,
+                        })
+    except Exception as e:
+        logger.error(f"HeyGen get_private_avatars error: {e}")
+
+    # Всегда добавляем хардкод-аватары если их нет в API-ответе
+    existing_ids = {a["avatar_id"] for a in avatars}
+    for ka in KNOWN_PRIVATE_AVATARS:
+        if ka["avatar_id"] not in existing_ids:
+            avatars.append(ka)
+
+    _private_avatars_cache = avatars
+
+    # Скачиваем превью
+    asyncio.create_task(sync_avatars_images(avatars))
+
+    try:
+        os.makedirs(os.path.dirname(PRIVATE_AVATARS_CACHE_FILE), exist_ok=True)
+        with open(PRIVATE_AVATARS_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump([{k: v for k, v in a.items() if not k.startswith("_")} for a in avatars],
+                      f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Ошибка записи кэша личных аватаров: {e}")
+
+    return avatars
+
+
 async def generate_video_from_audio(
     avatar_id: str,
     audio_url: str,

@@ -378,6 +378,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         fetch('/api/config').then(res => res.json()).then(cfg => {
                             if (cfg.avatars && cfg.avatars.length > 0) {
                                 windowAvatars = cfg.avatars;
+                                if (cfg.private_avatars) windowPrivateAvatars = cfg.private_avatars;
                                 const savedAvatar = localStorage.getItem('heygenAvatar') || cfg.default_avatar;
                                 const savedVideoFormat = localStorage.getItem('videoFormat') || '16:9';
                                 
