@@ -2,9 +2,11 @@
 marked.use({ breaks: true });
 
 let windowAvatars = [];
+let windowPrivateAvatars = [];   // личные аватары (talking photos)
 
 let currentAvatarTargetInput = null;
 let currentAvatarTargetBtn = null;
+let _avatarModalTab = 'public';  // 'public' | 'private'
 
 /** Превью с нашего бэкенда: корректный Content-Type, без блокировок HeyGen и без Tailwind в строках. */
 function avatarPreviewUrl(avatarId) {
@@ -50,93 +52,101 @@ function getVideoFormatValue(formatSelectId) {
  */
 function updateAvatarButtonText(inputId, btnId, formatSelectId) {
     const input = document.getElementById(inputId);
-    const btn = document.getElementById(btnId);
-    if (!input || !btn || windowAvatars.length === 0) return;
+    const btn   = document.getElementById(btnId);
+    if (!input || !btn) return;
 
-    const format = getVideoFormatValue(formatSelectId);
+    // Ищем сначала в публичных, потом в приватных
+    const allKnown = [...windowAvatars, ...windowPrivateAvatars];
+    if (allKnown.length === 0) return;
 
-    let savedId = input.value || localStorage.getItem('heygenAvatar');
-    let avatar = windowAvatars.find(a => a.avatar_id === savedId);
+    const format  = getVideoFormatValue(formatSelectId);
+    const savedId = input.value || localStorage.getItem('heygenAvatar');
+    let   avatar  = allKnown.find(a => a.avatar_id === savedId);
 
-    if (!avatar || !isAvatarFriendly(avatar, format)) {
+    if (!avatar) {
+        // Нет сохранённого → выбираем первый подходящий публичный
         let friendly = windowAvatars.filter(a => isAvatarFriendly(a, format));
         if (friendly.length === 0) friendly = windowAvatars;
-        avatar = friendly[0];
+        avatar = friendly[0] || null;
         if (avatar) input.value = avatar.avatar_id;
     }
 
     btn.replaceChildren();
+    const SPAN_CSS = 'font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
     if (avatar) {
-        const img = document.createElement('img');
-        img.src = avatarPreviewUrl(avatar.avatar_id);
-        img.alt = '';
-        img.className = 'ab-avatar-btn-thumb';
-        img.loading = 'lazy';
-        img.decoding = 'async';
+        // Используем /static напрямую (без API-прокси) — так же как карточки в SSR
+        const thumbDiv = document.createElement('div');
+        thumbDiv.style.cssText = 'width:24px;height:24px;border-radius:50%;flex-shrink:0;'
+            + 'border:1px solid #e5e7eb;display:inline-block;'
+            + "background:url('/static/img/avatars/" + avatar.avatar_id + ".webp') top center/cover;";
         const span = document.createElement('span');
-        span.className = 'ab-avatar-btn-text';
+        span.style.cssText = SPAN_CSS;
         span.textContent = avatar.avatar_name || avatar.avatar_id;
-        btn.appendChild(img);
+        btn.appendChild(thumbDiv);
         btn.appendChild(span);
     } else {
         const i = document.createElement('i');
         i.className = 'fas fa-user-circle';
-        i.setAttribute('style', 'color:#9ca3af;font-size:1.25rem');
+        i.style.cssText = 'color:#9ca3af;font-size:1.25rem;';
         btn.appendChild(i);
         const span = document.createElement('span');
-        span.className = 'ab-avatar-btn-text';
+        span.style.cssText = SPAN_CSS;
         span.textContent = 'Выбрать аватар...';
         btn.appendChild(span);
     }
 }
 
+/**
+ * LEGACY — оставлено для справки, но НЕ вызывается.
+ * Заменено SSR-подходом: /api/avatars-html + innerHTML.
+ */
 function _buildAvatarGrid(avatarList, currentSelectedId, format) {
     const frag = document.createDocumentFragment();
-    
-    // Метки совместимости для каждого аватара
-    const formatBadges = {
-        '16:9': { friendly: 'is_horizontal_friendly', label: '16:9', color: '#4f46e5' },
-        '9:16': { friendly: 'is_vertical_friendly',   label: '9:16', color: '#059669' },
-        '1:1':  { friendly: 'is_square_friendly',     label: '1:1',  color: '#d97706' }
+    const FMT = {
+        '16:9': { key: 'is_horizontal_friendly', label: '16:9', color: '#4f46e5' },
+        '9:16': { key: 'is_vertical_friendly',   label: '9:16', color: '#059669' },
+        '1:1':  { key: 'is_square_friendly',     label: '1:1',  color: '#d97706' }
     };
-    
+    const fmt = FMT[format] || FMT['16:9'];
+
     avatarList.forEach(a => {
-        const cell = document.createElement('button');
-        cell.type = 'button';
-        cell.className = 'ab-avatar-cell' + (a.avatar_id === currentSelectedId ? ' ab-avatar-cell--selected' : '');
+        const isSel = a.avatar_id === currentSelectedId;
+        const isGood = !!a[fmt.key];
 
+        // ── Cell (div, not button — avoids Tailwind button reset) ──
+        const cell = document.createElement('div');
+        cell.setAttribute('role', 'button');
+        cell.setAttribute('tabindex', '0');
+        cell.style.cssText = 'display:flex;flex-direction:column;margin:0;padding:0;'
+            + 'border-radius:12px;cursor:pointer;overflow:hidden;min-width:0;'
+            + 'background:#fff;transition:border-color .15s,box-shadow .15s;'
+            + 'border:2px solid ' + (isSel ? '#F47920' : '#e5e7eb') + ';'
+            + 'box-shadow:' + (isSel ? '0 0 0 3px rgba(244,121,32,.35)' : '0 1px 3px rgba(0,0,0,.06)') + ';';
+        cell.onmouseenter = function() { this.style.borderColor = '#F47920'; };
+        cell.onmouseleave = function() { if (!isSel) this.style.borderColor = '#e5e7eb'; };
+
+        // ── Thumb (background-image, фиксированная высота в px) ──
         const thumb = document.createElement('div');
-        thumb.className = 'ab-avatar-thumb';
+        thumb.style.cssText = 'width:100%;height:140px;min-height:140px;'
+            + 'background-color:#e5e7eb;position:relative;overflow:hidden;'
+            + "background-image:url('" + avatarPreviewUrl(a.avatar_id) + "');"
+            + 'background-size:cover;background-position:top center;';
 
-        const img = document.createElement('img');
-        img.src = avatarPreviewUrl(a.avatar_id);
-        img.alt = a.avatar_name || a.avatar_id;
-        img.className = 'ab-avatar-img';
-        img.loading = 'eager';
-        img.decoding = 'async';
-        img.width = 112;
-        img.height = 140;
-
-        // Метка совместимости с текущим форматом
+        // ── Format badge ──
         const badge = document.createElement('div');
-        badge.className = 'ab-avatar-badge';
-        const fmtInfo = formatBadges[format] || formatBadges['16:9'];
-        const isGood = a[fmtInfo.friendly];
-        badge.textContent = isGood ? '✓ ' + fmtInfo.label : '~ ' + fmtInfo.label;
-        badge.style.cssText = `
-            position:absolute; top:4px; right:4px;
-            font-size:9px; font-weight:700; line-height:1;
-            padding:2px 5px; border-radius:4px;
-            background:${isGood ? fmtInfo.color : '#6b7280'};
-            color:#fff; letter-spacing:0.3px;
-        `;
-        thumb.style.position = 'relative';
-        thumb.appendChild(img);
+        badge.textContent = (isGood ? '✓ ' : '~ ') + fmt.label;
+        badge.style.cssText = 'position:absolute;top:4px;right:4px;'
+            + 'font-size:9px;font-weight:700;line-height:1;'
+            + 'padding:2px 5px;border-radius:4px;color:#fff;letter-spacing:.3px;'
+            + 'background:' + (isGood ? fmt.color : '#6b7280') + ';';
         thumb.appendChild(badge);
 
+        // ── Label ──
         const label = document.createElement('div');
-        label.className = 'ab-avatar-label';
         label.textContent = a.avatar_name || a.avatar_id;
+        label.style.cssText = 'padding:8px 6px;font-size:11px;font-weight:600;'
+            + 'line-height:1.25;color:#374151;text-align:center;'
+            + 'min-height:2.75em;display:flex;align-items:center;justify-content:center;';
 
         cell.appendChild(thumb);
         cell.appendChild(label);
@@ -146,69 +156,321 @@ function _buildAvatarGrid(avatarList, currentSelectedId, format) {
     return frag;
 }
 
+// ─── SSR Avatar Modal ────────────────────────────────────────────────────────
+// Карточки генерируются на сервере (/api/avatars-html) с inline-стилями.
+// JS только делает fetch → innerHTML → подсветка выбранного.
+// Это полностью устраняет конфликты с Tailwind CDN preflight.
+// ─────────────────────────────────────────────────────────────────────────────
+
+let _avatarHtmlCache = {};  // key: "tab:format:showAll" → html string
+
 function openAvatarModal(formatSelectId, inputId, btnId) {
     currentAvatarTargetInput = inputId;
-    currentAvatarTargetBtn = btnId;
+    currentAvatarTargetBtn   = btnId;
 
-    const format = getVideoFormatValue(formatSelectId);
-    const input = document.getElementById(inputId);
-    const currentSelectedId = input ? input.value : null;
+    const format  = getVideoFormatValue(formatSelectId);
+    const input   = document.getElementById(inputId);
+    const selId   = input ? (input.value || '') : '';
 
-    const modal = document.getElementById('avatar-modal');
+    const modal   = document.getElementById('avatar-modal');
     const content = document.getElementById('avatar-modal-content');
-    const grid = document.getElementById('avatar-modal-grid');
+    const grid    = document.getElementById('avatar-modal-grid');
     if (!modal || !content || !grid) return;
 
-    // Фильтруем рекомендованных по формату, но всегда даём показать всех
-    let recommended = windowAvatars;
-    if (format === '9:16') recommended = windowAvatars.filter(a => a.is_vertical_friendly);
-    else if (format === '1:1') recommended = windowAvatars.filter(a => a.is_square_friendly);
-    else recommended = windowAvatars.filter(a => a.is_horizontal_friendly);
+    // Сбрасываем гендерный фильтр при каждом открытии
+    _currentGender = 'all';
 
-    const showAll = recommended.length === 0;
-    const listToShow = showAll ? windowAvatars : recommended;
+    // Event delegation — навешиваем один раз, живёт весь сеанс
+    if (!grid.dataset.delegated) {
+        grid.addEventListener('click', e => {
+            // Клик по иконке предпросмотра
+            const previewBtn = e.target.closest('[data-preview-id]');
+            if (previewBtn) {
+                e.stopPropagation();
+                _showAvatarPreview(previewBtn.dataset.previewId, previewBtn);
+                return;
+            }
+            // Клик по строке — выбор аватара
+            const card = e.target.closest('[data-avatar-id]');
+            if (card) selectAvatarFromModal(card.dataset.avatarId);
+        });
+        grid.dataset.delegated = '1';
+    }
 
-    // Строка-заголовок с фильтром "Показать все"
+    // Tab bar
+    let tabBar = document.getElementById('avatar-tab-bar');
+    if (!tabBar) {
+        tabBar = document.createElement('div');
+        tabBar.id = 'avatar-tab-bar';
+        grid.parentNode.insertBefore(tabBar, grid);
+    }
+    _renderAvatarTabs(tabBar, format, selId);
+
+    // Filter bar (только для public)
     let filterBar = document.getElementById('avatar-modal-filter');
     if (!filterBar) {
         filterBar = document.createElement('div');
         filterBar.id = 'avatar-modal-filter';
-        filterBar.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 16px 0;flex-shrink:0;';
         grid.parentNode.insertBefore(filterBar, grid);
     }
-    filterBar.innerHTML = '';
-    const countSpan = document.createElement('span');
-    countSpan.style.cssText = 'font-size:11px;color:#6b7280;flex:1;';
-    countSpan.textContent = `Рекомендовано для ${format}: ${listToShow.length} аватаров`;
-    filterBar.appendChild(countSpan);
+    _updateFilterBar(filterBar, format, selId, false);
 
-    if (!showAll && windowAvatars.length > listToShow.length) {
-        const showAllBtn = document.createElement('button');
-        showAllBtn.type = 'button';
-        showAllBtn.style.cssText = 'font-size:11px;color:#4f46e5;text-decoration:underline;background:none;border:none;cursor:pointer;padding:0;';
-        showAllBtn.textContent = `Показать все (${windowAvatars.length})`;
-        showAllBtn.onclick = () => {
-            countSpan.textContent = `Все аватары: ${windowAvatars.length}`;
-            showAllBtn.remove();
-            grid.replaceChildren(_buildAvatarGrid(windowAvatars, currentSelectedId, format));
-        };
-        filterBar.appendChild(showAllBtn);
-    }
+    // Загружаем карточки с сервера
+    _loadAvatarGrid(grid, filterBar, format, selId, _avatarModalTab, false);
 
-    grid.replaceChildren(_buildAvatarGrid(listToShow, currentSelectedId, format));
-
+    // Показываем модал
     modal.classList.remove('hidden');
     modal.style.display = 'flex';
-    modal.style.zIndex = '9999';
+    modal.style.zIndex  = '9999';
     void modal.offsetWidth;
     modal.classList.remove('opacity-0');
     content.classList.remove('scale-95');
     document.body.style.overflow = 'hidden';
 }
 
+/** Загружает HTML аватаров с сервера (или из кэша), вставляет через innerHTML */
+function _loadAvatarGrid(grid, filterBar, format, selId, tab, showAll) {
+    // Контейнер: разный CSS для текстового списка (public) и карточек (private)
+    if (tab === 'private') {
+        grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));'
+            + 'gap:12px;padding:16px;overflow-y:auto;flex:1 1 auto;min-height:0;'
+            + 'max-height:min(72vh,640px);background:#f9fafb;-webkit-overflow-scrolling:touch;';
+    } else {
+        grid.style.cssText = 'display:flex;flex-direction:column;overflow-y:auto;'
+            + 'flex:1 1 auto;min-height:0;max-height:min(72vh,640px);background:#fff;';
+    }
+
+    const cacheKey = tab + ':' + format + ':' + (showAll ? '1' : '0');
+
+    const inject = html => {
+        grid.innerHTML = html;
+        _highlightSelected(grid, selId, tab);
+        if (tab === 'public') _applyGenderFilter(grid, _currentGender);
+    };
+
+    if (_avatarHtmlCache[cacheKey]) { inject(_avatarHtmlCache[cacheKey]); return; }
+
+    const spinner = tab === 'private'
+        ? 'grid-column:1/-1;padding:48px;text-align:center;'
+        : 'padding:48px;text-align:center;';
+    grid.innerHTML = '<div style="' + spinner + 'color:#9ca3af;font-size:13px;">'
+        + '<i class="fas fa-spinner fa-spin" style="margin-right:8px;"></i>Загрузка...</div>';
+
+    fetch('/api/avatars-html?format=' + encodeURIComponent(format)
+            + '&tab=' + encodeURIComponent(tab)
+            + '&show_all=' + (showAll ? '1' : '0'))
+        .then(r => r.text())
+        .then(html => { _avatarHtmlCache[cacheKey] = html; inject(html); })
+        .catch(() => {
+            grid.innerHTML = '<div style="padding:48px;text-align:center;color:#ef4444;font-size:13px;">'
+                + '<i class="fas fa-exclamation-triangle" style="margin-right:8px;"></i>Ошибка загрузки</div>';
+        });
+}
+
+/** Подсвечивает выбранный аватар: фон для текстовых строк, рамка для карточек */
+function _highlightSelected(grid, selId, tab) {
+    if (!selId) return;
+    grid.querySelectorAll('[data-avatar-id]').forEach(el => {
+        const isSel = el.dataset.avatarId === selId;
+        if (tab === 'public') {
+            el.style.background = isSel ? '#fff7ed' : '#fff';
+            el.dataset.sel = isSel ? '1' : '';
+            el.querySelectorAll('span').forEach(s => {
+                if (s.style.flex === '1') s.style.color = isSel ? '#F47920' : '#374151';
+            });
+        } else {
+            el.style.borderColor = isSel ? '#F47920' : '#e5e7eb';
+            el.style.boxShadow   = isSel ? '0 0 0 3px rgba(244,121,32,.35)' : '0 1px 3px rgba(0,0,0,.06)';
+        }
+    });
+}
+
+// Текущий гендерный фильтр ('all' | 'female' | 'male')
+let _currentGender = 'all';
+
+/** Применяет гендерный фильтр к строкам в гриде */
+function _applyGenderFilter(grid, gender) {
+    _currentGender = gender;
+    grid.querySelectorAll('[data-gender]').forEach(row => {
+        const ok = gender === 'all' || row.dataset.gender === gender;
+        row.style.display = ok ? '' : 'none';
+    });
+}
+
+/**
+ * Показывает всплывающую карточку с фото аватара.
+ * Всплывашка позиционируется по viewport через position:fixed.
+ */
+function _showAvatarPreview(avatarId, triggerEl) {
+    let popup = document.getElementById('ab-avatar-preview-popup');
+    if (!popup) {
+        popup = document.createElement('div');
+        popup.id = 'ab-avatar-preview-popup';
+        popup.style.cssText = 'position:fixed;z-index:11000;width:220px;background:#fff;'
+            + 'border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.28);overflow:hidden;display:none;';
+        document.body.appendChild(popup);
+
+        // Закрываем по клику снаружи
+        document.addEventListener('click', e => {
+            if (!popup.contains(e.target) && !e.target.closest('[data-preview-id]')) {
+                popup.style.display = 'none';
+            }
+        }, true);
+    }
+
+    // Если уже открыт для того же аватара — закрываем (toggle)
+    if (popup.style.display !== 'none' && popup.dataset.aid === avatarId) {
+        popup.style.display = 'none';
+        return;
+    }
+    popup.dataset.aid = avatarId;
+
+    const imgUrl = '/static/img/avatars/' + avatarId + '.webp';
+    const row    = triggerEl.closest('[data-avatar-id]');
+    const nameEl = row ? row.querySelector('[style*="flex:1"]') : null;
+    const name   = nameEl ? nameEl.textContent.trim() : avatarId;
+
+    popup.innerHTML =
+        '<div style="position:relative;">'
+        + '<img src="' + imgUrl + '" '
+        + 'style="width:100%;height:240px;object-fit:cover;object-position:top center;display:block;" '
+        + 'onerror="this.parentNode.parentNode.style.display=\'none\'">'
+        + '<button onclick="document.getElementById(\'ab-avatar-preview-popup\').style.display=\'none\'" '
+        + 'style="position:absolute;top:8px;right:8px;width:26px;height:26px;border-radius:50%;'
+        + 'background:rgba(0,0,0,.55);border:none;cursor:pointer;color:#fff;font-size:13px;'
+        + 'display:flex;align-items:center;justify-content:center;line-height:1;">✕</button>'
+        + '</div>'
+        + '<div style="padding:10px 12px;font-size:12px;font-weight:600;color:#374151;'
+        + 'text-align:center;line-height:1.4;">' + name + '</div>';
+
+    // Позиционируем справа от иконки, корректируем чтобы не вышло за край экрана
+    popup.style.display = 'block';
+    const rect = triggerEl.getBoundingClientRect();
+    const pw = 220, ph = popup.offsetHeight || 290;
+    let left = rect.right + 10;
+    let top  = rect.top + rect.height / 2 - ph / 2;
+
+    if (left + pw > window.innerWidth - 8) left = rect.left - pw - 10;
+    if (left < 8) left = 8;
+    if (top < 8) top = 8;
+    if (top + ph > window.innerHeight - 8) top = window.innerHeight - ph - 8;
+
+    popup.style.left = left + 'px';
+    popup.style.top  = top  + 'px';
+}
+
+/** Строит инфо-строку с фильтрами: кол-во рекомендованных + гендер + «показать все» */
+function _updateFilterBar(filterBar, format, selId, showAll) {
+    if (_avatarModalTab === 'private') { filterBar.style.display = 'none'; return; }
+
+    filterBar.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:6px;'
+        + 'padding:6px 14px;font-size:12px;color:#6b7280;flex-shrink:0;'
+        + 'border-bottom:1px solid #f3f4f6;background:#fafafa;';
+    filterBar.innerHTML = '';
+
+    // ── Гендерный фильтр ───────────────────────────────────────────────────
+    const genders = [['all','Все'],['female','♀ Жен'],['male','♂ Муж']];
+    genders.forEach(([g, label]) => {
+        const btn = document.createElement('div');
+        btn.setAttribute('role', 'button');
+        btn.textContent = label;
+        const active = _currentGender === g;
+        btn.style.cssText = 'padding:2px 10px;border-radius:20px;cursor:pointer;font-size:11px;font-weight:600;'
+            + 'border:1px solid ' + (active ? '#F47920' : '#e5e7eb') + ';'
+            + 'background:' + (active ? '#F47920' : '#fff') + ';'
+            + 'color:' + (active ? '#fff' : '#6b7280') + ';';
+        btn.onclick = () => {
+            const grid = document.getElementById('avatar-modal-grid');
+            if (grid) _applyGenderFilter(grid, g);
+            _updateFilterBar(filterBar, format, selId, showAll);
+        };
+        filterBar.appendChild(btn);
+    });
+
+    if (windowAvatars.length === 0) return;
+
+    // ── Разделитель ────────────────────────────────────────────────────────
+    const sep = document.createElement('span');
+    sep.style.cssText = 'flex:1;';
+    filterBar.appendChild(sep);
+
+    // ── Счётчик + «Показать все» ───────────────────────────────────────────
+    let rec;
+    if (format === '9:16')     rec = windowAvatars.filter(a => a.is_vertical_friendly);
+    else if (format === '1:1') rec = windowAvatars.filter(a => a.is_square_friendly);
+    else                       rec = windowAvatars.filter(a => a.is_horizontal_friendly);
+    if (rec.length === 0) rec = windowAvatars;
+
+    const recCnt = rec.length, totalCnt = windowAvatars.length;
+
+    const countSpan = document.createElement('span');
+    countSpan.textContent = showAll ? 'Все: ' + totalCnt : 'Рек. ' + format + ': ' + recCnt;
+    filterBar.appendChild(countSpan);
+
+    if (!showAll && recCnt < totalCnt) {
+        const allBtn = document.createElement('div');
+        allBtn.setAttribute('role', 'button');
+        allBtn.textContent = 'Показать все (' + totalCnt + ')';
+        allBtn.style.cssText = 'color:#F47920;cursor:pointer;font-weight:600;text-decoration:underline;margin-left:6px;';
+        allBtn.onclick = () => {
+            const grid = document.getElementById('avatar-modal-grid');
+            if (grid) { _updateFilterBar(filterBar, format, selId, true); _loadAvatarGrid(grid, filterBar, format, selId, 'public', true); }
+        };
+        filterBar.appendChild(allBtn);
+    }
+}
+
+/** Вкладки «Публичные» / «Мои аватары» */
+function _renderAvatarTabs(tabBar, format, selId) {
+    tabBar.innerHTML = '';
+    tabBar.style.cssText = 'display:flex;gap:4px;padding:10px 12px 0;'
+        + 'flex-shrink:0;border-bottom:1px solid #f1f5f9;';
+
+    const makeTab = (text, icon, active, onClick) => {
+        const el = document.createElement('div');
+        el.setAttribute('role', 'button');
+        el.innerHTML = '<i class="fas ' + icon + '"></i> ' + text;
+        el.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:8px 16px;'
+            + 'border-radius:8px 8px 0 0;cursor:pointer;font-size:13px;font-weight:600;'
+            + 'user-select:none;border:1px solid transparent;border-bottom:none;'
+            + (active
+                ? 'background:#fff;color:#F47920;border-color:#f1f5f9;margin-bottom:-1px;padding-bottom:9px;'
+                : 'background:transparent;color:#6b7280;');
+        if (!active) {
+            el.onmouseenter = function () { this.style.color = '#374151'; this.style.background = '#f9fafb'; };
+            el.onmouseleave = function () { this.style.color = '#6b7280'; this.style.background = 'transparent'; };
+        }
+        el.onclick = onClick;
+        return el;
+    };
+
+    tabBar.appendChild(makeTab('Публичные', 'fa-users', _avatarModalTab === 'public', () => {
+        _avatarModalTab = 'public';
+        const grid      = document.getElementById('avatar-modal-grid');
+        const filterBar = document.getElementById('avatar-modal-filter');
+        _renderAvatarTabs(tabBar, format, selId);
+        _updateFilterBar(filterBar, format, selId, false);
+        _loadAvatarGrid(grid, filterBar, format, selId, 'public', false);
+    }));
+
+    const cnt = windowPrivateAvatars.length;
+    tabBar.appendChild(makeTab('Мои аватары' + (cnt ? ' (' + cnt + ')' : ''), 'fa-user-circle', _avatarModalTab === 'private', () => {
+        _avatarModalTab = 'private';
+        const grid      = document.getElementById('avatar-modal-grid');
+        const filterBar = document.getElementById('avatar-modal-filter');
+        _renderAvatarTabs(tabBar, format, selId);
+        _updateFilterBar(filterBar, format, selId, false);
+        _loadAvatarGrid(grid, filterBar, format, selId, 'private', false);
+    }));
+}
+
 function closeAvatarModal() {
     const modal = document.getElementById('avatar-modal');
     const content = document.getElementById('avatar-modal-content');
+
+    // Закрываем попап предпросмотра если открыт
+    const popup = document.getElementById('ab-avatar-preview-popup');
+    if (popup) popup.style.display = 'none';
 
     modal.classList.add('opacity-0');
     content.classList.add('scale-95');
@@ -496,6 +758,7 @@ function toggleVideoAccordion(uniqueId) {
             fetch('/api/config').then(res => res.json()).then(cfg => {
                 if (cfg.avatars && cfg.avatars.length > 0) {
                     windowAvatars = cfg.avatars;
+                    if (cfg.private_avatars) windowPrivateAvatars = cfg.private_avatars;
                     updateAvatarButtonText(`video-avatar-${uniqueId}`, `video-avatar-btn-${uniqueId}`, `video-format-${uniqueId}`);
                     input.dataset.loaded = 'true';
                     

@@ -10,10 +10,17 @@ let _treeAvatars = [];     // список аватаров (загружает�
 let _treeVoices  = [];     // список голосов ElevenLabs
 
 /* ─── Константы ────────────────────────────────────────────────────────── */
-const NODE_ICONS  = { article:'📄', script:'📝', audio:'🎵', video:'🎬' };
-const NODE_COLORS = { article:'#3b82f6', script:'#8b5cf6', audio:'#f59e0b', video:'#10b981' };
-const CHILD_TYPE  = { article:'script', script:'audio', audio:'video' };
-const ADD_LABELS  = { article:'+ Новый сценарий для аудио', script:'+ Новое аудио', audio:'+ Новое видео' };
+const NODE_ICONS  = { article:'fa-align-left', script:'fa-microphone', audio:'fa-headphones', video:'fa-film' };
+const NODE_COLORS = { article:'#3b82f6', script:'#8b5cf6', audio:'#F47920', video:'#10b981' };
+const NODE_BGS    = { article:'#eff6ff', script:'#f5f3ff', audio:'#fff7ed', video:'#f0fdf4' };
+const SECTION_LABELS  = { article:'Сценарии', script:'Аудиофайлы', audio:'Видео' };
+const CHILD_TYPE      = { article:'script', script:'audio', audio:'video' };
+const ADD_LABELS      = { article:'Новый сценарий', script:'Новое аудио', audio:'Новое видео' };
+const ADD_TOOLTIPS    = {
+    article: 'Создать аудиосценарий на основе этой статьи',
+    script:  'Сгенерировать аудиофайл из этого сценария',
+    audio:   'Создать видео на основе этого аудио',
+};
 
 /* ══════════════════════════════════════════════════════════════════════════
    CLASS ResultTree
@@ -72,18 +79,19 @@ class ResultTree {
 
     _buildNode(nodeData) {
         const isExpanded = this.expanded.has(nodeData.node_id);
-        const children = this._getChildren(nodeData.node_id);
+        const children   = this._getChildren(nodeData.node_id);
+        const color      = NODE_COLORS[nodeData.node_type] || '#94a3b8';
+        const bg         = NODE_BGS[nodeData.node_type]    || '#f8fafc';
 
         const wrap = document.createElement('div');
         wrap.className = `tn tn--${nodeData.node_type}`;
         wrap.id = `tn-${nodeData.node_id}`;
         wrap.setAttribute('data-node-id', nodeData.node_id);
-        wrap.style.setProperty('--tn-color', NODE_COLORS[nodeData.node_type] || '#94a3b8');
+        wrap.style.setProperty('--tn-color', color);
+        wrap.style.setProperty('--tn-bg',    bg);
 
-        // Заголовок
         wrap.appendChild(this._buildHeader(nodeData, children.length, isExpanded));
 
-        // Тело (скрыто, если свёрнут)
         const body = this._buildBody(nodeData, children);
         if (!isExpanded) body.classList.add('tn__body--hidden');
         wrap.appendChild(body);
@@ -96,50 +104,77 @@ class ResultTree {
         hdr.className = 'tn__header';
         hdr.onclick = () => this.toggle(node.node_id);
 
-        // Стрелка
-        const arrow = document.createElement('span');
-        arrow.className = 'tn__arrow' + (isExpanded ? ' tn__arrow--open' : '');
-        arrow.innerHTML = '▶';
+        /* ── Иконка в цветном круге ── */
+        const iconWrap = document.createElement('div');
+        iconWrap.className = 'tn__icon-wrap';
+        iconWrap.style.background    = `var(--tn-bg)`;
+        iconWrap.style.color         = `var(--tn-color)`;
+        iconWrap.style.borderColor   = `var(--tn-color)`;
+        iconWrap.innerHTML = `<i class="fas ${NODE_ICONS[node.node_type] || 'fa-circle'}"></i>`;
 
-        // Иконка типа
-        const icon = document.createElement('span');
-        icon.className = 'tn__icon';
-        icon.textContent = NODE_ICONS[node.node_type] || '▪';
+        /* ── Центральная группа: название + теги ── */
+        const center = document.createElement('div');
+        center.className = 'tn__center';
 
-        // Статус
-        const statusIcon = _statusIcon(node.status);
-        const statusEl = document.createElement('span');
-        statusEl.className = 'tn__status';
-        statusEl.innerHTML = statusIcon;
+        const titleRow = document.createElement('div');
+        titleRow.className = 'tn__title-row';
 
-        // Название (кликабельно для переименования)
+        if (node.status === 'processing') {
+            const spin = document.createElement('i');
+            spin.className = 'fas fa-circle-notch fa-spin tn__spin-icon';
+            titleRow.appendChild(spin);
+        } else if (node.status === 'failed') {
+            const dot = document.createElement('span');
+            dot.className = 'tn__fail-dot';
+            titleRow.appendChild(dot);
+        }
+
         const titleEl = document.createElement('span');
         titleEl.className = 'tn__title';
         titleEl.textContent = node.title || node.node_type;
         titleEl.ondblclick = (e) => { e.stopPropagation(); this._startRename(node.node_id, titleEl); };
+        titleRow.appendChild(titleEl);
 
-        // Счётчик детей
-        const counter = document.createElement('span');
-        counter.className = 'tn__counter';
-        if (childCount > 0) counter.textContent = `(${childCount})`;
+        if (childCount > 0) {
+            const counter = document.createElement('span');
+            counter.className = 'tn__counter';
+            counter.textContent = childCount;
+            titleRow.appendChild(counter);
+        }
 
-        // Теги-параметры
-        const tags = document.createElement('span');
-        tags.className = 'tn__tags';
-        tags.innerHTML = _buildTags(node);
+        center.appendChild(titleRow);
 
-        // Тег дата/время создания
+        const tagsEl = document.createElement('div');
+        tagsEl.className = 'tn__tags';
+        tagsEl.innerHTML = _buildTags(node);
+        if (tagsEl.innerHTML) center.appendChild(tagsEl);
+
+        /* ── Правая группа: дата + стоимость + стрелка + удаление ── */
+        const right = document.createElement('div');
+        right.className = 'tn__right';
+
         const dateStr = _fmtNodeDate(node.created_at);
-        const dateTag = document.createElement('span');
-        dateTag.className = 'tn__date-tag';
-        dateTag.textContent = dateStr;
+        if (dateStr) {
+            const d = document.createElement('span');
+            d.className = 'tn__date-tag';
+            d.textContent = dateStr;
+            right.appendChild(d);
+        }
 
-        // Стоимость и время генерации
-        const meta = document.createElement('span');
-        meta.className = 'tn__meta';
-        meta.innerHTML = _buildMeta(node);
+        const cost = _totalCost(node);
+        if (cost && parseFloat(cost) > 0) {
+            const c = document.createElement('span');
+            c.className = 'tn__cost-tag';
+            c.textContent = `$${cost}`;
+            right.appendChild(c);
+        }
 
-        hdr.append(arrow, icon, statusEl, titleEl, counter, tags, dateTag, meta);
+        const arrow = document.createElement('span');
+        arrow.className = 'tn__arrow' + (isExpanded ? ' tn__arrow--open' : '');
+        arrow.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        right.appendChild(arrow);
+
+        hdr.append(iconWrap, center, right);
         return hdr;
     }
 
@@ -147,39 +182,87 @@ class ResultTree {
         const body = document.createElement('div');
         body.className = 'tn__body';
 
-        // Контент узла
+        /* ── Контент узла ── */
         const content = _buildContent(node);
         if (content) body.appendChild(content);
 
-        // Кнопка удаления (не для article)
+        /* ── Кнопка удаления (только для не-article, в самом низу) ── */
         if (node.node_type !== 'article') {
-            const actions = document.createElement('div');
-            actions.className = 'tn__actions';
+            const delRow = document.createElement('div');
+            delRow.className = 'tn__del-row';
             const delBtn = document.createElement('button');
             delBtn.className = 'tn__del-btn';
             delBtn.innerHTML = '<i class="fas fa-trash-alt"></i> Удалить';
-            delBtn.onclick = () => this._confirmDelete(node.node_id, node.title);
-            actions.appendChild(delBtn);
-            body.appendChild(actions);
+            delBtn.onclick = (e) => { e.stopPropagation(); this._confirmDelete(node.node_id, node.title); };
+            delRow.appendChild(delBtn);
+            body.appendChild(delRow);
         }
 
-        // Дочерние узлы
-        const childrenWrap = document.createElement('div');
-        childrenWrap.className = 'tn__children';
-        children.sort((a, b) => a.position - b.position);
-        children.forEach(c => childrenWrap.appendChild(this._buildNode(c)));
-        body.appendChild(childrenWrap);
+        /* ── Секция дочерних узлов ── */
+        const hasChildren  = children.length > 0;
+        const canAdd       = !!CHILD_TYPE[node.node_type];
 
-        // Кнопка "+ добавить дочерний"
-        if (CHILD_TYPE[node.node_type]) {
-            const addBtn = document.createElement('button');
-            addBtn.className = 'tn__add-btn';
-            addBtn.innerHTML = `<i class="fas fa-plus"></i> ${ADD_LABELS[node.node_type]}`;
-            addBtn.onclick = (e) => {
-                e.stopPropagation();
-                openGenerateModal(node.node_id, CHILD_TYPE[node.node_type]);
-            };
-            body.appendChild(addBtn);
+        if (hasChildren || canAdd) {
+            const section = document.createElement('div');
+            section.className = 'tn__section';
+
+            const childType  = CHILD_TYPE[node.node_type];
+            const nextColor  = childType ? (NODE_COLORS[childType] || '#94a3b8') : '#94a3b8';
+            const nextBg     = childType ? (NODE_BGS[childType]    || '#f8fafc') : '#f8fafc';
+            const labelText  = SECTION_LABELS[node.node_type] || '';
+            const childIcon  = childType ? (NODE_ICONS[childType] || 'fa-circle') : 'fa-circle';
+
+            /* ── Строка-разделитель с кнопкой «+» ── */
+            const sectionLabel = document.createElement('div');
+            sectionLabel.className = 'tn__section-label';
+            sectionLabel.style.setProperty('--tn-next-color', nextColor);
+
+            // Левая часть: иконка + текст + счётчик
+            const leftPart = document.createElement('span');
+            leftPart.className = 'tn__section-left';
+            leftPart.innerHTML = `
+                <i class="fas ${childIcon} tn__section-icon"></i>
+                <span class="tn__section-text">${labelText}</span>
+                ${hasChildren ? `<span class="tn__section-count">${children.length}</span>` : ''}`;
+
+            // Правая часть: тонкая линия + кнопка «+»
+            const line = document.createElement('span');
+            line.className = 'tn__section-line';
+
+            sectionLabel.appendChild(leftPart);
+            sectionLabel.appendChild(line);
+
+            if (canAdd) {
+                const tooltip = ADD_TOOLTIPS[node.node_type] || 'Добавить';
+                const addBtn = document.createElement('button');
+                addBtn.className = 'tn__section-add';
+                addBtn.style.setProperty('--add-color', nextColor);
+                addBtn.style.setProperty('--add-bg',    nextBg);
+                addBtn.setAttribute('aria-label', tooltip);
+                addBtn.innerHTML = `
+                    <i class="fas ${childIcon}"></i>
+                    <i class="fas fa-plus tn__section-add-plus"></i>
+                    <span class="tn__section-add-tooltip">${tooltip}</span>`;
+                addBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    openGenerateModal(node.node_id, CHILD_TYPE[node.node_type]);
+                };
+                sectionLabel.appendChild(addBtn);
+            }
+
+            section.appendChild(sectionLabel);
+
+            /* ── Дочерние карточки ── */
+            if (hasChildren) {
+                const childrenWrap = document.createElement('div');
+                childrenWrap.className = 'tn__children';
+                childrenWrap.style.setProperty('--tn-next-color', nextColor);
+                children.sort((a, b) => a.position - b.position);
+                children.forEach(c => childrenWrap.appendChild(this._buildNode(c)));
+                section.appendChild(childrenWrap);
+            }
+
+            body.appendChild(section);
         }
 
         return body;
@@ -341,10 +424,17 @@ class ResultTree {
     _updateCounter(parentId) {
         const el = document.getElementById(`tn-${parentId}`);
         if (!el) return;
+        const cnt = this._getChildren(parentId).length;
+
+        // Счётчик в заголовке карточки
         const counter = el.querySelector(':scope > .tn__header .tn__counter');
-        if (counter) {
-            const cnt = this._getChildren(parentId).length;
-            counter.textContent = cnt > 0 ? `(${cnt})` : '';
+        if (counter) counter.textContent = cnt > 0 ? String(cnt) : '';
+
+        // Счётчик в строке секции
+        const secCount = el.querySelector(':scope > .tn__body .tn__section-count');
+        if (secCount) {
+            secCount.textContent = String(cnt);
+            secCount.style.display = cnt > 0 ? '' : 'none';
         }
     }
 
@@ -585,19 +675,25 @@ function _statsRow(parts) {
     return el;
 }
 
-/* ── Теги параметров в заголовке (однострочно) ─────────────────────────── */
+/* ── Теги параметров в заголовке ──────────────────────────────────────── */
 function _buildTags(node) {
-    const p = node.params_json || {};
-    const st = node.stats_json || {};
+    const p  = node.params_json || {};
+    const st = node.stats_json  || {};
     const parts = [];
     switch (node.node_type) {
+        case 'article':
+            if (st.step1 && st.step2) {
+                const model = (st.step1.model || '').replace('gemini-', '').replace('-preview','');
+                if (model) parts.push(model);
+            }
+            break;
         case 'script':
-            if (p.audio_duration_sec) parts.push(`${p.audio_duration_sec}с`);
+            if (p.audio_duration_sec) parts.push(`${p.audio_duration_sec} сек`);
             if (p.audio_wpm)          parts.push(`${p.audio_wpm} WPM`);
             break;
         case 'audio':
-            if (p.voice_name) parts.push(p.voice_name.split('(')[0].trim());
-            if (p.elevenlabs_model) parts.push(p.elevenlabs_model.replace('eleven_', '').replace('_', ' '));
+            if (p.voice_name)       parts.push(p.voice_name.split('(')[0].trim());
+            if (p.elevenlabs_model) parts.push(p.elevenlabs_model.replace('eleven_','').replace(/_/g,' '));
             if (st.audio_duration_sec) parts.push(_fmtDur(st.audio_duration_sec));
             break;
         case 'video':
@@ -1023,11 +1119,8 @@ async function initResultTree(slug) {
         const cfg = await fetch('/api/config').then(r => r.json());
         _treeVoices  = cfg.voices  || [];
         _treeAvatars = cfg.avatars || [];
-        // Совместимость с ui.js (openAvatarModal читает windowAvatars из своего scope)
-        // Переменная windowAvatars объявлена через let в ui.js, поэтому присваиваем через глобал
-        if (typeof windowAvatars !== 'undefined') {
-            windowAvatars = _treeAvatars;
-        }
+        if (typeof windowAvatars !== 'undefined')        windowAvatars        = _treeAvatars;
+        if (typeof windowPrivateAvatars !== 'undefined') windowPrivateAvatars = cfg.private_avatars || [];
     } catch (e) { console.warn('Не удалось загрузить config:', e); }
 
     _tree = new ResultTree(slug);

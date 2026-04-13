@@ -4,6 +4,7 @@ import time
 import asyncio
 import logging
 import json
+import html as _html
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -52,9 +53,114 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 _AVATAR_PREVIEW_DIR = os.path.join("static", "img", "avatars")
-_AVATAR_ID_SAFE = re.compile(r"^[a-zA-Z0-9_]+$")
+_AVATAR_ID_SAFE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 templates = Jinja2Templates(directory="templates")
+
+
+_AVATAR_FMT = {
+    "16:9": {"key": "is_horizontal_friendly", "label": "16:9", "color": "#4f46e5"},
+    "9:16": {"key": "is_vertical_friendly",   "label": "9:16", "color": "#059669"},
+    "1:1":  {"key": "is_square_friendly",     "label": "1:1",  "color": "#d97706"},
+}
+
+@app.get("/api/avatars-html")
+async def get_avatars_html(format: str = "16:9", tab: str = "public", show_all: str = "0"):
+    """
+    Публичные аватары → текстовый список с data-gender (надёжно, нет конфликтов с CSS).
+    Приватные аватары → карточки с фото (их мало, изображения загружаются гарантированно).
+    """
+    fmt = _AVATAR_FMT.get(format, _AVATAR_FMT["16:9"])
+
+    # ── Приватные: карточки с фото (мало аватаров, изображения всегда грузятся) ──
+    if tab == "private":
+        avatars = await get_heygen_private_avatars()
+        if not avatars:
+            return HTMLResponse(
+                '<div style="padding:60px 20px;text-align:center;color:#9ca3af;font-size:14px;">'
+                'Личные аватары не найдены</div>'
+            )
+        parts = []
+        for a in avatars:
+            aid      = a["avatar_id"]
+            name     = _html.escape(a.get("avatar_name", aid))
+            is_good  = bool(a.get(fmt["key"]))
+            badge_bg = fmt["color"] if is_good else "#6b7280"
+            badge_sym = "✓" if is_good else "~"
+            img_url  = f"/static/img/avatars/{aid}.webp"
+            parts.append(
+                f'<div data-avatar-id="{_html.escape(aid)}" role="button" tabindex="0" '
+                f'style="display:flex;flex-direction:column;border-radius:12px;cursor:pointer;'
+                f'overflow:hidden;background:#fff;border:2px solid #e5e7eb;'
+                f'box-shadow:0 1px 3px rgba(0,0,0,.06);">'
+                f'<div style="height:140px;min-height:140px;background-color:#e5e7eb;'
+                f"background-image:url('{img_url}');"
+                f'background-size:cover;background-position:top center;position:relative;">'
+                f'<div style="position:absolute;top:4px;right:4px;font-size:9px;font-weight:700;'
+                f'padding:2px 5px;border-radius:4px;background:{badge_bg};color:#fff;">'
+                f'{badge_sym}&nbsp;{fmt["label"]}</div></div>'
+                f'<div style="padding:8px 6px;font-size:11px;font-weight:600;color:#374151;'
+                f'text-align:center;min-height:2.75em;display:flex;align-items:center;'
+                f'justify-content:center;">{name}</div>'
+                f'</div>'
+            )
+        return HTMLResponse('\n'.join(parts))
+
+    # ── Публичные: текстовый список (нет проблем с CSS/изображениями) ──────────
+    all_av = await get_heygen_avatars()
+    if show_all != "1":
+        filtered = [a for a in all_av if a.get(fmt["key"])]
+        avatars  = filtered if filtered else all_av
+    else:
+        avatars  = all_av
+
+    if not avatars:
+        return HTMLResponse(
+            '<div style="padding:60px 20px;text-align:center;color:#9ca3af;font-size:14px;">'
+            'Аватары не найдены</div>'
+        )
+
+    _GENDER_ICON = {"female": "♀", "male": "♂"}
+    parts = []
+    for a in avatars:
+        aid       = a["avatar_id"]
+        name      = _html.escape(a.get("avatar_name", aid))
+        is_good   = bool(a.get(fmt["key"]))
+        badge_bg  = fmt["color"] if is_good else "#9ca3af"
+        badge_sym = "✓" if is_good else "~"
+        gender    = (a.get("gender") or "unknown").lower()
+        g_icon    = _GENDER_ICON.get(gender, "")
+        g_color   = "#ec4899" if gender == "female" else ("#3b82f6" if gender == "male" else "#9ca3af")
+
+        parts.append(
+            f'<div data-avatar-id="{_html.escape(aid)}" data-gender="{gender}" '
+            f'role="button" tabindex="0" '
+            f'style="display:flex;align-items:center;gap:10px;padding:9px 14px;'
+            f'border-bottom:1px solid #f3f4f6;cursor:pointer;background:#fff;"'
+            f' onmouseover="if(!this.dataset.sel)this.style.background=\'#f9fafb\'"'
+            f' onmouseout="if(!this.dataset.sel)this.style.background=\'#fff\'">'
+
+            f'<span style="font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;'
+            f'background:{badge_bg};color:#fff;white-space:nowrap;flex-shrink:0;">'
+            f'{badge_sym}&nbsp;{fmt["label"]}</span>'
+
+            f'<span style="font-size:13px;color:{g_color};flex-shrink:0;width:14px;'
+            f'text-align:center;">{g_icon}</span>'
+
+            f'<span style="font-size:13px;color:#374151;font-weight:500;flex:1;'
+            f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{name}</span>'
+
+            f'<span data-preview-id="{_html.escape(aid)}" '
+            f'style="flex-shrink:0;color:#94a3b8;cursor:pointer;padding:4px 6px;'
+            f'border-radius:6px;line-height:1;"'
+            f' onmouseover="this.style.color=\'#F47920\';this.style.background=\'#fff7ed\'"'
+            f' onmouseout="this.style.color=\'#94a3b8\';this.style.background=\'transparent\'"'
+            f' title="Предпросмотр аватара">'
+            f'<i class="fas fa-eye" style="pointer-events:none;font-size:12px;"></i></span>'
+            f'</div>'
+        )
+
+    return HTMLResponse('\n'.join(parts))
 
 
 @app.get("/api/avatar-preview/{avatar_id}")
@@ -153,7 +259,7 @@ async def read_index(request: Request):
 
 from app.core.prompt_manager import PromptManager
 
-from app.services.heygen_service import get_heygen_avatars, check_video_status
+from app.services.heygen_service import get_heygen_avatars, get_heygen_private_avatars, check_video_status
 
 @app.get("/api/video_status")
 async def check_heygen_video(video_id: str):
@@ -198,12 +304,18 @@ async def get_config():
         {k: v for k, v in a.items() if not k.startswith("_")}
         for a in avatars_raw
     ]
-    
+    private_raw = await get_heygen_private_avatars()
+    private_avatars = [
+        {k: v for k, v in a.items() if not k.startswith("_")}
+        for a in private_raw
+    ]
+
     return {
         "models": models,
         "styles": styles,
         "voices": voices,
         "avatars": avatars,
+        "private_avatars": private_avatars,
         "default_model": "gemini-3.1-pro-preview",
         "default_style": "telegram_yur",
         "default_voice": "FGY2WhTYpPnroxEErjIq",

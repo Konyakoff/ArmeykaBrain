@@ -215,6 +215,7 @@ async function loadConfig() {
         
         if (data.avatars && data.avatars.length > 0) {
             windowAvatars = data.avatars;
+            if (data.private_avatars) windowPrivateAvatars = data.private_avatars;
             const savedAvatar = localStorage.getItem('heygenAvatar') || data.default_avatar;
             updateAvatarButtonText('heygen-avatar', 'heygen-avatar-btn', 'video-format');
             

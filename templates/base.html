@@ -46,73 +46,9 @@
     <!-- Marked.js for Markdown parsing -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     
-    <link rel="stylesheet" href="/static/css/style.css?v=3.1">
-    <!-- Критические стили выбора аватара в HTML: не зависят от кэша style.css и Tailwind CDN -->
-    <style>
-        #avatar-modal-grid.ab-avatar-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
-            gap: 12px;
-            padding: 16px;
-            overflow-y: auto;
-            flex: 1 1 auto;
-            min-height: 0;
-            max-height: min(72vh, 640px);
-            background: #f9fafb;
-            -webkit-overflow-scrolling: touch;
-        }
-        .ab-avatar-cell {
-            display: flex;
-            flex-direction: column;
-            margin: 0;
-            padding: 0;
-            border: 2px solid #e5e7eb;
-            border-radius: 12px;
-            cursor: pointer;
-            background: #fff;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-            text-align: left;
-            font: inherit;
-            color: inherit;
-            overflow: hidden;
-            min-width: 0;
-            flex-shrink: 0;
-        }
-        .ab-avatar-cell:hover { border-color: #F47920; }
-        .ab-avatar-cell--selected {
-            border-color: #F47920;
-            box-shadow: 0 0 0 3px rgba(244, 121, 32, 0.35);
-        }
-        /* Фиксированная высота: в flex-колонке aspect-ratio часто даёт 0px */
-        .ab-avatar-thumb {
-            width: 100%;
-            height: 140px;
-            min-height: 140px;
-            flex-shrink: 0;
-            background: #e5e7eb;
-            position: relative;
-            overflow: hidden;
-        }
-        .ab-avatar-img {
-            display: block;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            object-position: top center;
-        }
-        .ab-avatar-label {
-            padding: 8px 6px;
-            font-size: 11px;
-            font-weight: 600;
-            line-height: 1.25;
-            color: #374151;
-            text-align: center;
-            min-height: 2.75em;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-    </style>
+    <link rel="stylesheet" href="/static/css/style.css?v=4.0">
+    <!-- Avatar modal: все стили карточек задаются inline через JS (ui.js).
+         Здесь ничего не определяем, чтобы исключить конфликты с Tailwind CDN. -->
     {% block extra_head %}{% endblock %}
 </head>
 <body class="text-brand-dark min-h-screen relative overflow-x-hidden">
@@ -129,7 +65,7 @@
                     <img src="/static/img/star_rounded.png" alt="*" class="w-8 h-8 sm:w-10 sm:h-10 animate-[pulse_2s_ease-in-out_infinite]" />
                     NET <span class="normal-case text-3xl sm:text-4xl ml-1 text-gray-700">Brain</span>
                 </a>
-                <p class="text-gray-500 text-base sm:text-lg mt-2 font-medium tracking-wide">{% block subtitle %}ИИ-юрист эксперт в области военного права{% endblock %}</p>
+                <p class="text-gray-500 text-base sm:text-lg mt-2 font-medium tracking-wide">{% block subtitle %}ИИ-штаб маркетинга{% endblock %}</p>
             </div>
             <div>
                 {% block header_actions %}
@@ -156,14 +92,14 @@
                 </button>
             </div>
             <!-- Body (Grid) -->
-            <div id="avatar-modal-grid" class="ab-avatar-grid custom-scrollbar">
-                <!-- Avatars: заполняются через DOM API + ab-*.css (Tailwind в innerHTML не работает с CDN) -->
+            <div id="avatar-modal-grid" class="custom-scrollbar">
+                <!-- Аватары: рендерятся JS с inline-стилями (ui.js) -->
             </div>
         </div>
     </div>
 
-    <script src="/static/js/ui.js?v=3.0"></script>
-    <script src="/static/js/api.js?v=3.0"></script>
+    <script src="/static/js/ui.js?v=4.3"></script>
+    <script src="/static/js/api.js?v=4.0"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>
