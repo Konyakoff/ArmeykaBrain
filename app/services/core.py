@@ -7,7 +7,7 @@ from app.db.database import save_result
 
 logger = logging.getLogger("core")
 
-async def process_query_logic(queue: asyncio.Queue, question: str, model: str, style: str, context_threshold: int, send_prompts: bool, max_length: int = 4000, tab_type: str = "text", audio_duration: int = 60, elevenlabs_model: str = "eleven_v3", audio_wpm: int = 150, elevenlabs_voice: str = "FGY2WhTYpPnroxEErjIq", audio_style: float = 0.25, use_speaker_boost: bool = True, audio_stability: float = 0.5, audio_similarity_boost: float = 0.75, heygen_avatar_id: str = "Abigail_standing_office_front", video_format: str = "16:9", heygen_engine: str = "avatar_iv", avatar_style: str = "auto"):
+async def process_query_logic(queue: asyncio.Queue, question: str, model: str, style: str, context_threshold: int, send_prompts: bool, max_length: int = 4000, tab_type: str = "text", audio_duration: int = 60, elevenlabs_model: str = "eleven_v3", audio_wpm: int = 150, elevenlabs_voice: str = "FGY2WhTYpPnroxEErjIq", audio_style: float = 0.25, use_speaker_boost: bool = True, audio_stability: float = 0.5, audio_similarity_boost: float = 0.75, heygen_avatar_id: str = "Abigail_standing_office_front", video_format: str = "16:9", heygen_engine: str = "avatar_iv", avatar_style: str = "auto", custom_prompts: dict = None):
     """
     Основная логика обработки запроса к ИИ.
     Выполняется в фоне и пишет промежуточные шаги в queue.
@@ -53,7 +53,9 @@ async def process_query_logic(queue: asyncio.Queue, question: str, model: str, s
         
         await queue.put({"step": 2, "message": "Шаг 2: Формируем экспертное заключение..."})
         start_time_2 = time.time()
-        step2 = await get_expert_analysis(question, combined_context, style=style, max_length=max_length)
+        _cp = custom_prompts or {}
+        step2 = await get_expert_analysis(question, combined_context, style=style, max_length=max_length,
+                                          override_style=_cp.get("step2_style"))
         gen_time_2 = int(time.time() - start_time_2)
         
         in_cost_2, out_cost_2 = calculate_cost(step2.in_tokens, step2.out_tokens, "gemini-3.1-pro-preview")
@@ -80,7 +82,8 @@ async def process_query_logic(queue: asyncio.Queue, question: str, model: str, s
         if tab_type in ["audio", "video"]:
             await queue.put({"step": 3, "message": f"Шаг 3: Генерируем короткий аудиосценарий на {audio_duration} секунд..."})
             start_time_3 = time.time()
-            step3 = await generate_audio_script(step2.answer, audio_duration, audio_wpm)
+            step3 = await generate_audio_script(step2.answer, audio_duration, audio_wpm,
+                                                override=_cp.get("step3"))
             gen_time_3 = int(time.time() - start_time_3)
             
             in_cost_3, out_cost_3 = calculate_cost(step3.in_tokens, step3.out_tokens, "gemini-3.1-pro-preview")

@@ -18,6 +18,7 @@ TRANSLATIONS = {
     "young": "молодой",
     "middle_aged": "средний возраст",
     "middle aged": "средний возраст",
+    "middle-aged": "средний возраст",
     "old": "пожилой",
     "calm": "спокойный",
     "casual": "повседневный",
@@ -170,11 +171,18 @@ async def get_elevenlabs_voices() -> list:
                         
                         desc_parts = [p for p in [gender, age, descriptive, use_case] if p]
                         desc_str = ", ".join(desc_parts)
+
+                        # category: 'premade' — публичные голоса ElevenLabs,
+                        # 'cloned' / 'professional' / 'generated' — пользовательские голоса
+                        raw_category = v.get("category", "premade")
+                        is_my_voice = raw_category in ("cloned", "professional", "generated")
+                        category = "my" if is_my_voice else "public"
                         
                         extracted.append({
                             "voice_id": v.get("voice_id"),
                             "name": final_name,
-                            "description": desc_str
+                            "description": desc_str,
+                            "category": category
                         })
                     _voices_cache = extracted
                     

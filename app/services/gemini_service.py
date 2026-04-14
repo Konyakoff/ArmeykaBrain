@@ -143,7 +143,8 @@ def prepare_expert_context(top_articles: list[ArticleItem], threshold: int = 70)
     combined_context = "\n\n".join(contexts) if contexts else ""
     return combined_context, used_ids
 
-async def get_expert_analysis(question: str, combined_context: str, style: str = "telegram_yur", max_length: int = 4000) -> Step2Result:
+async def get_expert_analysis(question: str, combined_context: str, style: str = "telegram_yur", max_length: int = 4000,
+                              override_style: str = None) -> Step2Result:
     """Шаг 2: Получаем экспертный ответ на основе подготовленного контекста."""
     model_name = "gemini-3.1-pro-preview"
     model = genai.GenerativeModel(model_name)
@@ -151,7 +152,8 @@ async def get_expert_analysis(question: str, combined_context: str, style: str =
     if not combined_context:
         return Step2Result(answer="К сожалению, не удалось найти детальный юридический контекст для выбранных статей.")
         
-    prompt = PromptManager.get_step2_prompt(question, combined_context, style, max_length)
+    prompt = PromptManager.get_step2_prompt(question, combined_context, style, max_length,
+                                            override_style=override_style)
     
     try:
         response = await model.generate_content_async(prompt)
@@ -167,7 +169,8 @@ async def get_expert_analysis(question: str, combined_context: str, style: str =
         print(f"Error in get_expert_analysis: {e}")
         return Step2Result(answer=f"Ошибка при генерации ответа: {e}", error=str(e))
 
-async def generate_audio_script(expert_answer: str, duration: int, wpm: int = 150) -> Step3Result:
+async def generate_audio_script(expert_answer: str, duration: int, wpm: int = 150,
+                               override: str = None) -> Step3Result:
     """Шаг 3: Превращаем экспертный ответ в короткий текст для аудио."""
     model_name = "gemini-3.1-pro-preview"
     model = genai.GenerativeModel(model_name)
@@ -186,7 +189,8 @@ async def generate_audio_script(expert_answer: str, duration: int, wpm: int = 15
     min_words = int(duration * words_per_second * 0.85)
     max_words = int(duration * words_per_second * 1.0)
     
-    prompt = PromptManager.get_audio_script_prompt(expert_answer, duration, min_words, max_words)
+    prompt = PromptManager.get_audio_script_prompt(expert_answer, duration, min_words, max_words,
+                                                    override=override)
     
     try:
         response = await model.generate_content_async(prompt)

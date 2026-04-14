@@ -131,7 +131,7 @@ class ResultTree {
 
         const titleEl = document.createElement('span');
         titleEl.className = 'tn__title';
-        titleEl.textContent = node.title || node.node_type;
+        titleEl.textContent = _buildDisplayTitle(node, this.nodesMap);
         titleEl.ondblclick = (e) => { e.stopPropagation(); this._startRename(node.node_id, titleEl); };
         titleRow.appendChild(titleEl);
 
@@ -146,7 +146,7 @@ class ResultTree {
 
         const tagsEl = document.createElement('div');
         tagsEl.className = 'tn__tags';
-        tagsEl.innerHTML = _buildTags(node);
+        tagsEl.innerHTML = _buildTags(node, this.nodesMap);
         if (tagsEl.innerHTML) center.appendChild(tagsEl);
 
         /* ── Правая группа: дата + стоимость + стрелка + удаление ── */
@@ -639,6 +639,12 @@ function _contentVideo(node) {
         pending.className = 'tn__video-pending';
         pending.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Видео генерируется...';
         wrap.appendChild(pending);
+    } else if (node.status === 'failed') {
+        const errMsg = (node.stats_json || {}).error_message || 'Неизвестная ошибка';
+        const errEl = document.createElement('div');
+        errEl.className = 'tn__video-error';
+        errEl.innerHTML = `<i class="fas fa-exclamation-triangle"></i> <strong>Ошибка:</strong> ${errMsg}`;
+        wrap.appendChild(errEl);
     }
 
     const p = node.params_json || {};
@@ -676,30 +682,108 @@ function _statsRow(parts) {
 }
 
 /* ── Теги параметров в заголовке ──────────────────────────────────────── */
-function _buildTags(node) {
+/**
+ * Builds a display title for a node, appending key metadata in parentheses
+ * for audio and video nodes when they are completed.
+ * @param {object} node
+ * @returns {string}
+ */
+function _buildDisplayTitle(node, nodesMap) {
+    const base = node.title || node.node_type;
+    // Audio: only show extras when completed (duration is calculated at that point)
+    // Video: always show format/duration since params are set at creation time
+    if (node.status !== 'completed' && node.node_type !== 'video') return base;
+
+    const p  = node.params_json || {};
+    const st = node.stats_json  || {};
+
+    if (node.node_type === 'audio') {
+        // Keep only the person's name: "Laura - энтузиаст..." → "Laura", "Lisa Bykova" → "Lisa Bykova"
+        const rawVoice  = p.voice_name || st.voice_name || '';
+        const voiceName = rawVoice.split('(')[0].split(' - ')[0].trim();
+        // audio_duration_sec (tree flow) or duration_sec (main pipeline)
+        const dur = st.audio_duration_sec || st.duration_sec;
+        const extras = [voiceName || null, dur ? `${dur}с` : null].filter(Boolean);
+        return extras.length ? `${base} (${extras.join(', ')})` : base;
+    }
+
+    if (node.node_type === 'video') {
+        const format = p.video_format || st.video_format || '';
+
+        // Duration: stored value first; otherwise look up parent audio node
+        let dur = st.audio_duration_sec;
+        if (!dur && nodesMap && node.parent_node_id) {
+            const parentNode = nodesMap.get(node.parent_node_id);
+            if (parentNode) {
+                const pst = parentNode.stats_json || {};
+                dur = pst.audio_duration_sec || pst.duration_sec;
+            }
+        }
+
+        // Voice name: strip description part
+        const rawVoice  = p.voice_name || st.voice_name || '';
+        const voiceName = rawVoice.split('(')[0].split(' - ')[0].trim();
+        const extras    = [format || null, dur ? `${dur}с` : null, voiceName || null].filter(Boolean);
+        return extras.length ? `${base} (${extras.join(', ')})` : base;
+    }
+
+    return base;
+}
+
+function _buildTags(node, nodesMap) {
     const p  = node.params_json || {};
     const st = node.stats_json  || {};
     const parts = [];
     switch (node.node_type) {
-        case 'article':
-            if (st.step1 && st.step2) {
-                const model = (st.step1.model || '').replace('gemini-', '').replace('-preview','');
+        case 'article': {
+            if (st.step1) {
+                const model = (st.step1.model || '').replace('gemini-', '').replace('-preview', '');
                 if (model) parts.push(model);
             }
+            const charLen = node.content_text?.length;
+            if (charLen) parts.push(`${Math.round(charLen / 100) * 100}с`);
             break;
-        case 'script':
-            if (p.audio_duration_sec) parts.push(`${p.audio_duration_sec} сек`);
-            if (p.audio_wpm)          parts.push(`${p.audio_wpm} WPM`);
+        }
+        case 'script': {
+            // Primary source: params_json (tree-modal-generated scripts)
+            let dur = p.audio_duration_sec;
+            let wpm = p.audio_wpm;
+            let style = p.style;
+            // Fallback for initial scripts (no params_json): look at first child audio node
+            if (!dur && nodesMap) {
+                const childAudio = [...nodesMap.values()].find(
+                    n => n.parent_node_id === node.node_id && n.node_type === 'audio'
+                );
+                if (childAudio) {
+                    const cst = childAudio.stats_json || {};
+                    const cp  = childAudio.params_json || {};
+                    dur   = cst.audio_duration_sec || cst.duration_sec;
+                    wpm   = wpm   || cst.wpm || cp.audio_wpm;
+                    style = style || cp.style || cp.elevenlabs_model;
+                }
+            }
+            if (dur)   parts.push(`${dur}с`);
+            if (wpm)   parts.push(`${wpm}wpm`);
+            if (style) parts.push(style);
             break;
-        case 'audio':
-            if (p.voice_name)       parts.push(p.voice_name.split('(')[0].trim());
-            if (p.elevenlabs_model) parts.push(p.elevenlabs_model.replace('eleven_','').replace(/_/g,' '));
-            if (st.audio_duration_sec) parts.push(_fmtDur(st.audio_duration_sec));
+        }
+        case 'audio': {
+            // elevenlabs_model: tree flow uses params_json/stats_json.elevenlabs_model;
+            // main pipeline uses stats_json.model
+            const elModel = (p.elevenlabs_model || st.elevenlabs_model || st.model || '');
+            if (elModel) parts.push(elModel.replace('eleven_', '').replace(/_/g, ' '));
+            const wpm = st.wpm || p.audio_wpm;
+            if (wpm) parts.push(`${wpm}wpm`);
             break;
-        case 'video':
-            if (p.heygen_engine) parts.push(p.heygen_engine === 'avatar_iv' ? 'Avatar IV' : 'Avatar III');
-            if (p.video_format)  parts.push(p.video_format);
+        }
+        case 'video': {
+            const avatarName = (p.avatar_name || st.avatar_name || '').split(' ')[0];
+            if (avatarName) parts.push(avatarName);
+            if (p.heygen_engine) parts.push(p.heygen_engine === 'avatar_iv' ? 'Av.IV' : 'Av.III');
+            const style = p.avatar_style || st.avatar_style;
+            if (style && style !== 'auto') parts.push(style);
             break;
+        }
     }
     return parts.map(t => `<span class="tn__tag">${t}</span>`).join('');
 }
@@ -799,9 +883,15 @@ function _buildModalForm(type) {
         </div>`;
 
     } else if (type === 'audio') {
-        const voiceOptions = _treeVoices.map(v =>
-            `<option value="${v.voice_id}" ${v.voice_id === _ls('elevenlabsVoice','FGY2WhTYpPnroxEErjIq') ? 'selected' : ''}>${v.name}</option>`
-        ).join('') || '<option value="FGY2WhTYpPnroxEErjIq">Laura</option>';
+        const _savedVoice = _ls('elevenlabsVoice', 'FGY2WhTYpPnroxEErjIq');
+        const _myVoices = _treeVoices.filter(v => v.category === 'my');
+        const _pubVoices = _treeVoices.filter(v => v.category !== 'my');
+        const _optHtml = (v) => `<option value="${v.voice_id}" ${v.voice_id === _savedVoice ? 'selected' : ''}>${v.name}</option>`;
+        const voiceOptions = _treeVoices.length === 0
+            ? '<option value="FGY2WhTYpPnroxEErjIq">Laura</option>'
+            : (_myVoices.length > 0
+                ? `<optgroup label="Мои голоса">${_myVoices.map(_optHtml).join('')}</optgroup><optgroup label="Публичные">${_pubVoices.map(_optHtml).join('')}</optgroup>`
+                : _pubVoices.map(_optHtml).join(''));
 
         form.innerHTML = `
         <div class="gm-row">

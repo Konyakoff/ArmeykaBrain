@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
+from typing import Optional
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -194,6 +195,7 @@ class QueryRequest(BaseModel):
     video_format: str = Field(default="16:9", description="Формат видео: 16:9, 9:16, 1:1")
     heygen_engine: str = Field(default="avatar_iv", description="Версия движка: avatar_iv, avatar_iii")
     avatar_style: str = Field(default="auto", description="Стиль кадрирования: auto | normal | closeUp | circle")
+    custom_prompts: Optional[dict] = Field(default=None, description="Кастомные шаблоны промптов для текущего запроса")
 
 class AudioRequest(BaseModel):
     text: str = Field(..., min_length=1, description="Текст для озвучки")
@@ -322,6 +324,43 @@ async def get_config():
         "default_avatar": "Abigail_standing_office_front"
     }
 
+@app.get("/api/prompts")
+async def get_prompts():
+    """Возвращает текущие шаблоны промптов для редактора."""
+    from app.core.prompt_manager import PromptManager as PM
+    core = PM.get_core_prompts()
+    styles = PM.get_styles()
+    audio = PM.get_audio_prompts()
+
+    prompts = {}
+
+    # step2_style — отдаём все ключи (один ключ = один стиль), но в редактор
+    # попадает текущий стиль. Возвращаем полный словарь.
+    prompts["step2_style"] = {k: v for k, v in styles.items()}
+
+    # step3 — аудиосценарий
+    prompts["step3"] = audio.get("default", "")
+
+    return JSONResponse(content={"prompts": prompts})
+
+
+class SavePromptRequest(BaseModel):
+    target: str
+    content: str
+    style_key: Optional[str] = None
+
+
+@app.post("/api/prompts/save")
+async def save_prompt(req: SavePromptRequest):
+    """Сохраняет изменённый промпт на диск и инвалидирует кэш."""
+    from app.core.prompt_manager import PromptManager as PM
+    try:
+        PM.save_prompt(req.target, req.content, req.style_key)
+        return JSONResponse(content={"ok": True})
+    except ValueError as e:
+        return JSONResponse(content={"ok": False, "error": str(e)}, status_code=400)
+
+
 @app.post("/api/query")
 async def process_user_query(req: QueryRequest):
     """
@@ -356,7 +395,8 @@ async def process_user_query(req: QueryRequest):
             heygen_avatar_id=req.heygen_avatar_id,
             video_format=req.video_format,
             heygen_engine=req.heygen_engine,
-            avatar_style=req.avatar_style if hasattr(req, 'avatar_style') else "auto"
+            avatar_style=req.avatar_style if hasattr(req, 'avatar_style') else "auto",
+            custom_prompts=req.custom_prompts or {}
         )
     )
     # Сохраняем жесткую ссылку, чтобы сборщик мусора не удалил задачу

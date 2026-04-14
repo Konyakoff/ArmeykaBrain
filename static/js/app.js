@@ -163,6 +163,29 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('heygen-engine')?.addEventListener('change', (e) => localStorage.setItem('heygenEngine', e.target.value));
 });
 
+/**
+ * Builds grouped voice <option>/<optgroup> HTML for a <select> element.
+ * Voices with category "my" are placed in "Мои голоса", the rest in "Публичные".
+ * If no "my" voices exist, returns a flat list without optgroups.
+ * @param {Array<{voice_id:string, name:string, description:string, category?:string}>} voices
+ * @param {string} selectedId
+ * @returns {string}
+ */
+function buildVoiceOptionsHtml(voices, selectedId) {
+    const myVoices = voices.filter(v => v.category === 'my');
+    const publicVoices = voices.filter(v => v.category !== 'my');
+
+    const optionHtml = (v) =>
+        `<option value="${v.voice_id}" ${v.voice_id === selectedId ? 'selected' : ''}>${v.name}${v.description ? ` (${v.description})` : ''}</option>`;
+
+    if (myVoices.length === 0) {
+        return publicVoices.map(optionHtml).join('');
+    }
+
+    return `<optgroup label="Мои голоса">${myVoices.map(optionHtml).join('')}</optgroup>` +
+           `<optgroup label="Публичные">${publicVoices.map(optionHtml).join('')}</optgroup>`;
+}
+
 async function loadConfig() {
     try {
         const response = await fetch('/api/config');
@@ -192,19 +215,17 @@ async function loadConfig() {
         
         if (data.voices && data.voices.length > 0) {
             const savedVoice = localStorage.getItem('elevenlabsVoice') || data.default_voice;
-            const voiceOptions = data.voices.map(v => 
-                `<option value="${v.voice_id}" ${v.voice_id === savedVoice ? 'selected' : ''}>${v.name} (${v.description})</option>`
-            ).join('');
+            const voiceOptionsHtml = buildVoiceOptionsHtml(data.voices, savedVoice);
             const voiceSelect = document.getElementById('elevenlabs-voice');
             if(voiceSelect) {
-                voiceSelect.innerHTML = voiceOptions;
+                voiceSelect.innerHTML = voiceOptionsHtml;
                 voiceSelect.addEventListener('change', (e) => {
                     localStorage.setItem('elevenlabsVoice', e.target.value);
                 });
             }
             const regenVoice = document.getElementById('regen-voice');
             if(regenVoice) {
-                regenVoice.innerHTML = voiceOptions;
+                regenVoice.innerHTML = voiceOptionsHtml;
                 regenVoice.value = savedVoice;
                 regenVoice.addEventListener('change', (e) => {
                     localStorage.setItem('elevenlabsVoice', e.target.value);
@@ -399,7 +420,8 @@ async function sendQuery() {
                 heygen_avatar_id: heygenAvatarId,
                 video_format: videoFormat,
                 heygen_engine: heygenEngine,
-                avatar_style: avatarStyle
+                avatar_style: avatarStyle,
+                custom_prompts: peGetCustomPrompts()
             })
         });
 
@@ -750,3 +772,311 @@ async function sendQuery() {
         submitBtn.classList.remove('opacity-80', 'cursor-not-allowed');
     }
 }
+
+// ═══════════════════════════════════════════════════════════════
+// РЕДАКТОР ПРОМПТОВ
+// ═══════════════════════════════════════════════════════════════
+
+const PROMPT_PLACEHOLDERS = {
+    step2_style: ['{max_length}'],
+    step3: ['[ВСТАВИТЬ ВАШ ИСХОДНЫЙ ТЕКСТ]', '[N]', '[MIN_WORDS]', '[MAX_WORDS]'],
+};
+
+const LS_PROMPTS_KEY = 'pe_custom_prompts';
+const LS_EDITOR_OPEN = 'pe_editor_open';
+
+// Состояние редактора
+const promptEditor = {
+    activeKey: 'step2_style',
+    activeStyleKey: null,  // для step2_style — конкретный стиль
+    originals: {},         // с сервера
+    session: {},           // localStorage, только отличия от оригиналов
+};
+
+function peLoad() {
+    const saved = localStorage.getItem(LS_PROMPTS_KEY);
+    if (saved) {
+        try { promptEditor.session = JSON.parse(saved); } catch (e) { promptEditor.session = {}; }
+    }
+}
+
+function peSave() {
+    localStorage.setItem(LS_PROMPTS_KEY, JSON.stringify(promptEditor.session));
+}
+
+function peGetSessionKey(key, styleKey) {
+    return key === 'step2_style' ? `step2_style:${styleKey}` : key;
+}
+
+function peGetActive() {
+    const k = promptEditor.activeKey;
+    if (k === 'step2_style') {
+        const sk = promptEditor.activeStyleKey;
+        const sessionKey = peGetSessionKey(k, sk);
+        if (promptEditor.session[sessionKey] !== undefined) return promptEditor.session[sessionKey];
+        return (promptEditor.originals[k] || {})[sk] || '';
+    }
+    if (promptEditor.session[k] !== undefined) return promptEditor.session[k];
+    return promptEditor.originals[k] || '';
+}
+
+function peGetOriginal() {
+    const k = promptEditor.activeKey;
+    if (k === 'step2_style') {
+        const sk = promptEditor.activeStyleKey;
+        return (promptEditor.originals[k] || {})[sk] || '';
+    }
+    return promptEditor.originals[k] || '';
+}
+
+function peRenderPlaceholders(key) {
+    const box = document.getElementById('prompt-placeholders');
+    if (!box) return;
+    const chips = (PROMPT_PLACEHOLDERS[key] || []).map(ph =>
+        `<span class="pe-chip">${ph}</span>`
+    ).join('');
+    box.innerHTML = chips || '';
+}
+
+function peCheckWarning(text, key) {
+    const warn = document.getElementById('prompt-missing-warning');
+    const warnText = document.getElementById('prompt-missing-text');
+    if (!warn || !warnText) return;
+    const required = PROMPT_PLACEHOLDERS[key] || [];
+    const missing = required.filter(ph => !text.includes(ph));
+    if (missing.length > 0) {
+        warnText.textContent = `Отсутствуют обязательные плейсхолдеры: ${missing.join(', ')}`;
+        warn.classList.remove('hidden');
+    } else {
+        warn.classList.add('hidden');
+    }
+}
+
+function peRenderEditor() {
+    const textarea = document.getElementById('prompt-editor-text');
+    if (!textarea) return;
+    textarea.value = peGetActive();
+    peRenderPlaceholders(promptEditor.activeKey);
+    peCheckWarning(textarea.value, promptEditor.activeKey);
+}
+
+function peSetStatusMsg(msg, isError = false) {
+    const el = document.getElementById('prompt-save-status');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = `text-sm ml-auto ${isError ? 'text-red-500' : 'text-green-600'}`;
+    setTimeout(() => { el.textContent = ''; }, 3000);
+}
+
+async function peInitEditor() {
+    peLoad();
+    try {
+        const res = await fetch('/api/prompts');
+        const data = await res.json();
+        promptEditor.originals = data.prompts || {};
+    } catch (e) {
+        console.error('Не удалось загрузить промпты', e);
+    }
+
+    // Установить первый стиль по умолчанию
+    const styles = promptEditor.originals['step2_style'] || {};
+    const styleKeys = Object.keys(styles);
+    promptEditor.activeStyleKey = styleKeys[0] || null;
+
+    peRenderEditor();
+    peUpdateTabStyle();
+}
+
+function peUpdateTabStyle() {
+    document.querySelectorAll('.prompt-tab').forEach(btn => {
+        const isActive = btn.dataset.key === promptEditor.activeKey;
+        btn.classList.toggle('active', isActive);
+        btn.classList.toggle('border-brand-main', isActive);
+        btn.classList.toggle('text-brand-main', isActive);
+        btn.classList.toggle('bg-brand-lightBg', isActive);
+        btn.classList.toggle('border-transparent', !isActive);
+        btn.classList.toggle('text-gray-500', !isActive);
+    });
+
+    // Стайл-селект: показываем/скрываем
+    let styleSelector = document.getElementById('pe-style-selector');
+    if (promptEditor.activeKey === 'step2_style') {
+        if (!styleSelector) {
+            styleSelector = document.createElement('select');
+            styleSelector.id = 'pe-style-selector';
+            styleSelector.className = 'pe-style-select text-sm border-2 border-gray-200 rounded-lg px-3 py-1.5 text-brand-dark';
+            const phBox = document.getElementById('prompt-placeholders');
+            if (phBox && phBox.parentNode) phBox.parentNode.insertBefore(styleSelector, phBox);
+
+            styleSelector.addEventListener('change', () => {
+                promptEditor.activeStyleKey = styleSelector.value;
+                peRenderEditor();
+            });
+        }
+        const styles = promptEditor.originals['step2_style'] || {};
+        styleSelector.innerHTML = Object.keys(styles).map(sk =>
+            `<option value="${sk}"${sk === promptEditor.activeStyleKey ? ' selected' : ''}>${sk}</option>`
+        ).join('');
+        styleSelector.classList.remove('hidden');
+    } else {
+        if (styleSelector) styleSelector.classList.add('hidden');
+    }
+}
+
+function peInitUI() {
+    const card = document.getElementById('prompt-editor-card');
+    const toggle = document.getElementById('prompt-editor-toggle');
+    const closeBtn = document.getElementById('prompt-editor-close');
+    const textarea = document.getElementById('prompt-editor-text');
+    const saveSessionBtn = document.getElementById('prompt-save-session-btn');
+    const saveDiskBtn = document.getElementById('prompt-save-disk-btn');
+    const resetBtn = document.getElementById('prompt-reset-btn');
+
+    if (!card || !toggle) return;
+
+    // Восстанавливаем состояние открытия
+    if (localStorage.getItem(LS_EDITOR_OPEN) === '1') {
+        card.classList.remove('hidden');
+        peInitEditor();
+    }
+
+    toggle.addEventListener('click', () => {
+        const isOpen = !card.classList.contains('hidden');
+        card.classList.toggle('hidden', isOpen);
+        localStorage.setItem(LS_EDITOR_OPEN, isOpen ? '0' : '1');
+        if (!isOpen) peInitEditor();
+    });
+
+    if (closeBtn) closeBtn.addEventListener('click', () => {
+        card.classList.add('hidden');
+        localStorage.setItem(LS_EDITOR_OPEN, '0');
+    });
+
+    // Переключение вкладок промптов
+    document.querySelectorAll('.prompt-tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (textarea) {
+                // Сохраняем текущее значение в сессию перед переключением
+                peApplyToSession(textarea.value);
+            }
+            promptEditor.activeKey = btn.dataset.key;
+            if (promptEditor.activeKey === 'step2_style') {
+                const styles = promptEditor.originals['step2_style'] || {};
+                const keys = Object.keys(styles);
+                promptEditor.activeStyleKey = keys[0] || null;
+            }
+            peRenderEditor();
+            peUpdateTabStyle();
+        });
+    });
+
+    // Обновляем предупреждение при вводе
+    if (textarea) {
+        textarea.addEventListener('input', () => {
+            peCheckWarning(textarea.value, promptEditor.activeKey);
+        });
+    }
+
+    // Применить на сессию
+    if (saveSessionBtn) saveSessionBtn.addEventListener('click', () => {
+        if (!textarea) return;
+        const text = textarea.value;
+        const required = PROMPT_PLACEHOLDERS[promptEditor.activeKey] || [];
+        const missing = required.filter(ph => !text.includes(ph));
+        if (missing.length > 0) {
+            peSetStatusMsg(`Добавьте плейсхолдеры: ${missing.join(', ')}`, true);
+            return;
+        }
+        peApplyToSession(text);
+        peSave();
+        peSetStatusMsg('Применено на текущую сессию ✓');
+    });
+
+    // Сохранить на диск
+    if (saveDiskBtn) saveDiskBtn.addEventListener('click', async () => {
+        if (!textarea) return;
+        const text = textarea.value;
+        const required = PROMPT_PLACEHOLDERS[promptEditor.activeKey] || [];
+        const missing = required.filter(ph => !text.includes(ph));
+        if (missing.length > 0) {
+            peSetStatusMsg(`Добавьте плейсхолдеры: ${missing.join(', ')}`, true);
+            return;
+        }
+        saveDiskBtn.disabled = true;
+        try {
+            const body = {
+                target: promptEditor.activeKey,
+                content: text,
+                style_key: promptEditor.activeKey === 'step2_style' ? promptEditor.activeStyleKey : null
+            };
+            const res = await fetch('/api/prompts/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            const data = await res.json();
+            if (data.ok) {
+                // Обновляем originals локально
+                if (promptEditor.activeKey === 'step2_style') {
+                    promptEditor.originals['step2_style'][promptEditor.activeStyleKey] = text;
+                } else {
+                    promptEditor.originals[promptEditor.activeKey] = text;
+                }
+                // Убираем из сессии (т.к. теперь это оригинал)
+                const sk = peGetSessionKey(promptEditor.activeKey, promptEditor.activeStyleKey);
+                delete promptEditor.session[sk];
+                peSave();
+                peSetStatusMsg('Сохранено на диск ✓');
+            } else {
+                peSetStatusMsg(data.error || 'Ошибка сохранения', true);
+            }
+        } catch (e) {
+            peSetStatusMsg('Ошибка сети', true);
+        } finally {
+            saveDiskBtn.disabled = false;
+        }
+    });
+
+    // Сбросить к оригиналу
+    if (resetBtn) resetBtn.addEventListener('click', () => {
+        const sk = peGetSessionKey(promptEditor.activeKey, promptEditor.activeStyleKey);
+        delete promptEditor.session[sk];
+        peSave();
+        peRenderEditor();
+        peSetStatusMsg('Сброшено к оригиналу');
+    });
+}
+
+function peApplyToSession(text) {
+    const sk = peGetSessionKey(promptEditor.activeKey, promptEditor.activeStyleKey);
+    const orig = peGetOriginal();
+    if (text === orig) {
+        delete promptEditor.session[sk];
+    } else {
+        promptEditor.session[sk] = text;
+    }
+}
+
+/** Возвращает объект custom_prompts для передачи в API /api/query */
+function peGetCustomPrompts() {
+    if (!Object.keys(promptEditor.session).length) return null;
+    const out = {};
+    for (const [sk, val] of Object.entries(promptEditor.session)) {
+        if (sk.startsWith('step2_style:')) {
+            // передаём только тот стиль, который выбран в UI как "стиль ответа"
+            const styleKey = sk.replace('step2_style:', '');
+            const currentStyle = document.getElementById('style-select')?.value;
+            if (styleKey === currentStyle) {
+                out['step2_style'] = val;
+            }
+        } else {
+            out[sk] = val;
+        }
+    }
+    return Object.keys(out).length ? out : null;
+}
+
+// Инициализация при загрузке DOM
+document.addEventListener('DOMContentLoaded', () => {
+    peInitUI();
+});
