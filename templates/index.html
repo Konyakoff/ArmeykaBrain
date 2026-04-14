@@ -220,6 +220,71 @@
     </div>
 </div>
 
+<!-- Card 1.5: Редактор промптов (скрыт по умолчанию) -->
+<div id="prompt-editor-card" class="bg-white rounded-[24px] shadow-card p-6 sm:p-10 transition-all duration-300 border border-white relative overflow-hidden hidden">
+    <div class="decorative-blob bottom-[-20px] right-[-20px] transition-transform duration-700"></div>
+
+    <div class="flex items-center justify-between mb-6">
+        <h2 class="text-xl font-bold text-brand-dark flex items-center gap-3 heading-font">
+            <span class="splatter-icon-outline"><i class="fas fa-terminal"></i></span>
+            Редактор промптов
+        </h2>
+        <button id="prompt-editor-close" title="Скрыть редактор"
+            class="text-gray-400 hover:text-gray-600 transition-colors text-xl">
+            <i class="fas fa-times"></i>
+        </button>
+    </div>
+
+    <!-- Вкладки промптов -->
+    <div class="flex gap-2 mb-5 border-b border-gray-200 pb-0" id="prompt-tabs">
+        <button class="prompt-tab active px-4 py-2 text-sm font-semibold rounded-t-lg border-b-2 border-brand-main text-brand-main bg-brand-lightBg" data-key="step2_style">
+            Стиль статьи (step 2)
+        </button>
+        <button class="prompt-tab px-4 py-2 text-sm font-semibold rounded-t-lg border-b-2 border-transparent text-gray-500 hover:text-gray-700" data-key="step3">
+            Аудиосценарий (step 3)
+        </button>
+    </div>
+
+    <!-- Заголовок с плейсхолдерами -->
+    <div id="prompt-placeholders" class="mb-3 flex flex-wrap gap-2"></div>
+
+    <!-- Textarea -->
+    <textarea id="prompt-editor-text" rows="16"
+        class="w-full rounded-xl p-4 font-mono text-sm text-brand-dark border-2 border-gray-200 focus:border-brand-main resize-y leading-relaxed"
+        spellcheck="false"></textarea>
+
+    <!-- Предупреждение о плейсхолдерах -->
+    <div id="prompt-missing-warning" class="hidden mt-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+        <i class="fas fa-exclamation-triangle mr-1"></i>
+        <span id="prompt-missing-text"></span>
+    </div>
+
+    <!-- Кнопки действий -->
+    <div class="flex flex-wrap items-center gap-3 mt-4">
+        <button id="prompt-save-session-btn"
+            class="btn-organic text-white font-semibold py-2.5 px-6 flex items-center gap-2 text-sm shadow">
+            <i class="fas fa-bolt"></i> Применить на сессию
+        </button>
+        <button id="prompt-save-disk-btn"
+            class="bg-green-600 hover:bg-green-700 text-white font-semibold py-2.5 px-6 rounded-xl flex items-center gap-2 text-sm shadow transition-colors">
+            <i class="fas fa-save"></i> Сохранить на диск
+        </button>
+        <button id="prompt-reset-btn"
+            class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2.5 px-6 rounded-xl flex items-center gap-2 text-sm transition-colors">
+            <i class="fas fa-undo"></i> Сбросить
+        </button>
+        <span id="prompt-save-status" class="text-sm text-gray-400 ml-auto"></span>
+    </div>
+</div>
+
+<!-- Кнопка-тоггл редактора промптов -->
+<div class="flex justify-end -mt-2 mb-2">
+    <button id="prompt-editor-toggle"
+        class="flex items-center gap-2 text-xs font-medium text-gray-400 hover:text-brand-main transition-colors py-1 px-2 rounded-lg hover:bg-gray-100">
+        <i class="fas fa-code"></i> Редактор промптов
+    </button>
+</div>
+
 <!-- Card 2: Ваш вопрос -->
 <div class="bg-white rounded-[24px] shadow-card p-6 sm:p-10 transition-all duration-300 border border-white relative overflow-hidden group hover:shadow-soft">
     <h2 class="text-xl font-bold text-brand-dark mb-5 flex items-center gap-3 heading-font">

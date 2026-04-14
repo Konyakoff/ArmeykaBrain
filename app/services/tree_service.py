@@ -232,6 +232,22 @@ async def generate_video_node(queue: asyncio.Queue, slug: str,
     if not audio_url.startswith("http"):
         audio_url = f"{HOST_URL}{audio_url}"
 
+    # Получаем данные из родительского аудио-узла для отображения в заголовке видео
+    parent_params = parent.get("params_json") or {}
+    if isinstance(parent_params, str):
+        try: parent_params = json.loads(parent_params)
+        except: parent_params = {}
+    parent_stats = parent.get("stats_json") or {}
+    if isinstance(parent_stats, str):
+        try: parent_stats = json.loads(parent_stats)
+        except: parent_stats = {}
+
+    audio_voice_name = (parent_params.get("voice_name") or parent_stats.get("voice_name") or "")
+    audio_duration = parent_stats.get("audio_duration_sec", 60)
+
+    # Добавляем голос из аудио в params видео, чтобы фронтенд мог его показать в заголовке
+    params_with_voice = {**params, "voice_name": audio_voice_name}
+
     title = _next_title(slug, parent_node_id, "video")
     node = ResultNode(
         slug=slug,
@@ -241,7 +257,7 @@ async def generate_video_node(queue: asyncio.Queue, slug: str,
         title=title,
         status="processing",
         position=_count_nodes_of_type(slug, parent_node_id, "video"),
-        params_json=json.dumps(params, ensure_ascii=False),
+        params_json=json.dumps(params_with_voice, ensure_ascii=False),
         created_at=datetime.utcnow(),
     )
     node = save_tree_node(node)
@@ -253,7 +269,7 @@ async def generate_video_node(queue: asyncio.Queue, slug: str,
         video_format = params.get("video_format", "16:9")
         avatar_style = params.get("avatar_style", "auto")
 
-        await queue.put({"step": 5, "message": "Запуск генерации видео в HeyGen (3-10 мин)..."})
+        await queue.put({"step": 5, "message": "Запуск генерации видео в HeyGen (3-15 мин)..."})
         t0 = time.time()
 
         video_id = await generate_video_from_audio(
@@ -264,30 +280,28 @@ async def generate_video_node(queue: asyncio.Queue, slug: str,
             heygen_engine=engine_name,
             avatar_style=avatar_style,
         )
+        logger.info(f"generate_video_node: HeyGen video_id={video_id}, polling up to 30 min...")
 
-        # Polling статуса (до 15 минут)
+        # Polling статуса (до 30 минут, 180 попыток по 10 сек)
         await queue.put({"step": 5, "message": "Ожидание рендеринга видео HeyGen..."})
         video_url = None
-        for attempt in range(90):
+        for attempt in range(180):
             await asyncio.sleep(10)
             status_info = await check_video_status(video_id)
             if status_info["status"] == "completed":
                 video_url = status_info["video_url"]
                 break
             elif status_info["status"] == "failed":
-                raise Exception(f"HeyGen failed: {status_info.get('error')}")
+                heygen_error = status_info.get("error") or "неизвестная ошибка"
+                raise Exception(f"HeyGen: ошибка рендеринга — {heygen_error}")
+            if attempt % 6 == 5:
+                elapsed = round(time.time() - t0)
+                logger.info(f"generate_video_node: video_id={video_id}, elapsed={elapsed}s, attempt={attempt+1}/180")
 
         if not video_url:
-            raise Exception("HeyGen: превышено время ожидания видео")
+            raise Exception(f"HeyGen: превышено время ожидания видео (video_id={video_id})")
 
         gen_time = round(time.time() - t0)
-
-        # Считаем длительность аудио из статистики родителя
-        parent_stats = parent.get("stats_json") or {}
-        if isinstance(parent_stats, str):
-            try: parent_stats = json.loads(parent_stats)
-            except: parent_stats = {}
-        audio_duration = parent_stats.get("audio_duration_sec", 60)
         cost = calculate_heygen_cost(audio_duration, engine_name)
 
         stats = {
@@ -298,6 +312,8 @@ async def generate_video_node(queue: asyncio.Queue, slug: str,
             "video_format": video_format,
             "avatar_style": avatar_style,
             "video_id": video_id,
+            "voice_name": audio_voice_name,
+            "audio_duration_sec": audio_duration,
             "total_cost": cost,
             "generation_time_sec": gen_time,
             "status": "completed",
@@ -311,9 +327,16 @@ async def generate_video_node(queue: asyncio.Queue, slug: str,
         await queue.put({"step": "done", "node": _node_to_dict(node)})
 
     except Exception as e:
-        logger.error(f"generate_video_node error: {e}")
-        update_tree_node_status(node.node_id, "failed")
-        await queue.put({"step": "error", "message": str(e), "node_id": node.node_id})
+        error_msg = str(e)
+        logger.error(f"generate_video_node error: {error_msg}")
+        error_stats = json.dumps({
+            "status": "failed",
+            "error_message": error_msg,
+            "heygen_engine": params.get("heygen_engine", ""),
+            "video_format": params.get("video_format", ""),
+        }, ensure_ascii=False)
+        update_tree_node_status(node.node_id, "failed", stats_json=error_stats)
+        await queue.put({"step": "error", "message": error_msg, "node_id": node.node_id})
 
 
 # ──────────────────────────────────────────────────────────────────────────────

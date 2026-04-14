@@ -581,6 +581,22 @@ textarea::-webkit-scrollbar-thumb:hover { background: #F47920; }
     border: 1px solid #e9d5ff;
 }
 
+.tn__video-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 12px 16px;
+    color: #b91c1c;
+    font-size: 12px;
+    background: #fef2f2;
+    border-radius: 10px;
+    margin-bottom: 8px;
+    border: 1px solid #fecaca;
+    line-height: 1.5;
+    word-break: break-word;
+}
+.tn__video-error i { flex-shrink: 0; margin-top: 2px; }
+
 /* Строка параметров */
 .tn__param-row {
     font-size: 11px;
@@ -966,4 +982,72 @@ textarea::-webkit-scrollbar-thumb:hover { background: #F47920; }
 }
 #gm-submit-btn:hover   { background: #4f46e5; }
 #gm-submit-btn:disabled { background: #a5b4fc; cursor: not-allowed; }
+
+/* ═══════════════════════════════════════════════════════════
+   РЕДАКТОР ПРОМПТОВ
+   ═══════════════════════════════════════════════════════════ */
+
+/* Чипы-плейсхолдеры */
+.pe-chip {
+    display: inline-block;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    background: #fef3e2;
+    color: #c2670a;
+    border: 1.5px solid #f8d5a5;
+    border-radius: 6px;
+    padding: 2px 8px;
+    cursor: default;
+    user-select: all;
+    letter-spacing: 0.01em;
+}
+
+/* Стиль-селект */
+.pe-style-select {
+    background-color: #fcf6f2;
+    border-color: #f0dfd1;
+    color: #2d1b0e;
+    font-weight: 600;
+    font-size: 13px;
+    padding: 6px 12px;
+    border-radius: 10px;
+    border-width: 2px;
+    margin-bottom: 10px;
+}
+.pe-style-select:focus { outline: none; border-color: #f47920; }
+
+/* Кнопки вкладок промптов */
+.prompt-tab {
+    transition: all 0.15s;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.prompt-tab:focus { outline: none; }
+
+/* Textarea редактора — моноширинный шрифт */
+#prompt-editor-text {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+    font-size: 12.5px;
+    line-height: 1.65;
+    background-color: #fdfdfc;
+    border-color: #e8ddd4;
+    color: #2d1b0e;
+    min-height: 260px;
+    transition: border-color 0.2s;
+}
+#prompt-editor-text:focus {
+    border-color: #f47920;
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(244, 121, 32, 0.12);
+}
+
+/* Кнопка-тоггл (под card 1) */
+#prompt-editor-toggle {
+    font-size: 11px;
+    letter-spacing: 0.03em;
+    opacity: 0.65;
+    transition: opacity 0.15s;
+}
+#prompt-editor-toggle:hover { opacity: 1; }
 
