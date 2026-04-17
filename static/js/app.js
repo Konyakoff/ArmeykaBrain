@@ -779,8 +779,11 @@ async function sendQuery() {
 
 const PROMPT_PLACEHOLDERS = {
     step2_style: ['{max_length}'],
-    step3: ['[ВСТАВИТЬ ВАШ ИСХОДНЫЙ ТЕКСТ]', '[N]', '[MIN_WORDS]', '[MAX_WORDS]'],
+    step3:       ['[ВСТАВИТЬ ВАШ ИСХОДНЫЙ ТЕКСТ]', '[N]', '[MIN_WORDS]', '[MAX_WORDS]'],
 };
+
+// Ключи промптов step3, которые нельзя удалять через UI
+const STEP3_SYSTEM_KEYS = new Set(['v1', 'v2', 'evaluation']);
 
 const LS_PROMPTS_KEY = 'pe_custom_prompts';
 const LS_EDITOR_OPEN = 'pe_editor_open';
@@ -788,10 +791,12 @@ const LS_EDITOR_OPEN = 'pe_editor_open';
 // Состояние редактора
 const promptEditor = {
     activeKey: 'step2_style',
-    activeStyleKey: null,  // для step2_style — конкретный стиль
-    originals: {},         // с сервера
+    activeStyleKey: null,  // для текущей вкладки — выбранный ключ промпта
+    originals: {},         // с сервера: { step2_style: {name: text, ...}, step3: {default: text, ...} }
     session: {},           // localStorage, только отличия от оригиналов
 };
+
+// ──── Утилиты ────────────────────────────────────────────────
 
 function peLoad() {
     const saved = localStorage.getItem(LS_PROMPTS_KEY);
@@ -804,30 +809,34 @@ function peSave() {
     localStorage.setItem(LS_PROMPTS_KEY, JSON.stringify(promptEditor.session));
 }
 
-function peGetSessionKey(key, styleKey) {
-    return key === 'step2_style' ? `step2_style:${styleKey}` : key;
+function peGetSessionKey() {
+    const k = promptEditor.activeKey;
+    const sk = promptEditor.activeStyleKey;
+    return `${k}:${sk}`;
 }
 
-function peGetActive() {
-    const k = promptEditor.activeKey;
-    if (k === 'step2_style') {
-        const sk = promptEditor.activeStyleKey;
-        const sessionKey = peGetSessionKey(k, sk);
-        if (promptEditor.session[sessionKey] !== undefined) return promptEditor.session[sessionKey];
-        return (promptEditor.originals[k] || {})[sk] || '';
-    }
-    if (promptEditor.session[k] !== undefined) return promptEditor.session[k];
-    return promptEditor.originals[k] || '';
+function peGetActiveText() {
+    const sessionKey = peGetSessionKey();
+    if (promptEditor.session[sessionKey] !== undefined) return promptEditor.session[sessionKey];
+    const pool = promptEditor.originals[promptEditor.activeKey] || {};
+    return pool[promptEditor.activeStyleKey] || '';
 }
 
-function peGetOriginal() {
-    const k = promptEditor.activeKey;
-    if (k === 'step2_style') {
-        const sk = promptEditor.activeStyleKey;
-        return (promptEditor.originals[k] || {})[sk] || '';
-    }
-    return promptEditor.originals[k] || '';
+function peGetOriginalText() {
+    const pool = promptEditor.originals[promptEditor.activeKey] || {};
+    return pool[promptEditor.activeStyleKey] || '';
 }
+
+function peApplyToSession(text) {
+    const sk = peGetSessionKey();
+    if (text === peGetOriginalText()) {
+        delete promptEditor.session[sk];
+    } else {
+        promptEditor.session[sk] = text;
+    }
+}
+
+// ──── UI-рендер ──────────────────────────────────────────────
 
 function peRenderPlaceholders(key) {
     const box = document.getElementById('prompt-placeholders');
@@ -855,7 +864,7 @@ function peCheckWarning(text, key) {
 function peRenderEditor() {
     const textarea = document.getElementById('prompt-editor-text');
     if (!textarea) return;
-    textarea.value = peGetActive();
+    textarea.value = peGetActiveText();
     peRenderPlaceholders(promptEditor.activeKey);
     peCheckWarning(textarea.value, promptEditor.activeKey);
 }
@@ -865,8 +874,144 @@ function peSetStatusMsg(msg, isError = false) {
     if (!el) return;
     el.textContent = msg;
     el.className = `text-sm ml-auto ${isError ? 'text-red-500' : 'text-green-600'}`;
-    setTimeout(() => { el.textContent = ''; }, 3000);
+    setTimeout(() => { el.textContent = ''; }, 3500);
 }
+
+/** Перерисовывает выпадающий список промптов для активной вкладки */
+function peRebuildSelector(selectId, pool, currentKey) {
+    let sel = document.getElementById(selectId);
+    if (!sel) {
+        sel = document.createElement('select');
+        sel.id = selectId;
+        sel.className = 'pe-style-select text-sm border-2 border-gray-200 rounded-lg px-3 py-1.5 text-brand-dark';
+        const phBox = document.getElementById('prompt-placeholders');
+        if (phBox && phBox.parentNode) phBox.parentNode.insertBefore(sel, phBox);
+
+        sel.addEventListener('change', () => {
+            promptEditor.activeStyleKey = sel.value;
+            peRenderEditor();
+            peUpdateDeleteBtn();
+        });
+    }
+    sel.innerHTML = Object.keys(pool).map(k =>
+        `<option value="${k}"${k === currentKey ? ' selected' : ''}>${k}</option>`
+    ).join('');
+    sel.classList.remove('hidden');
+    return sel;
+}
+
+function peUpdateTabStyle() {
+    document.querySelectorAll('.prompt-tab').forEach(btn => {
+        const isActive = btn.dataset.key === promptEditor.activeKey;
+        btn.classList.toggle('border-brand-main', isActive);
+        btn.classList.toggle('text-brand-main', isActive);
+        btn.classList.toggle('bg-brand-lightBg', isActive);
+        btn.classList.toggle('border-transparent', !isActive);
+        btn.classList.toggle('text-gray-500', !isActive);
+    });
+
+    const pool = promptEditor.originals[promptEditor.activeKey] || {};
+
+    // Скрываем все возможные селекторы
+    ['pe-style-selector', 'pe-step3-selector'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('hidden');
+    });
+
+    if (promptEditor.activeKey === 'step2_style') {
+        peRebuildSelector('pe-style-selector', pool, promptEditor.activeStyleKey);
+    } else if (promptEditor.activeKey === 'step3') {
+        peRebuildSelector('pe-step3-selector', pool, promptEditor.activeStyleKey);
+    }
+
+    peUpdateDeleteBtn();
+}
+
+/** Показываем/скрываем кнопку Удалить в зависимости от выбранного промпта */
+function peUpdateDeleteBtn() {
+    const btn = document.getElementById('prompt-delete-btn');
+    if (!btn) return;
+    const name = promptEditor.activeStyleKey;
+    // Нельзя удалять: default (step3), системные ключи
+    const protected_ = name === 'default' || STEP3_SYSTEM_KEYS.has(name);
+    btn.disabled = protected_;
+    btn.title = protected_ ? 'Этот промпт нельзя удалить (системный)' : 'Удалить промпт';
+    btn.classList.toggle('opacity-40', protected_);
+    btn.classList.toggle('cursor-not-allowed', protected_);
+}
+
+// ──── Модалка пароля ─────────────────────────────────────────
+
+/**
+ * Открывает модалку с запросом пароля.
+ * @param {string} title  — заголовок действия
+ * @param {string} desc   — описание
+ * @param {boolean} needName — показывать ли поле «имя»
+ * @returns {Promise<{password, name}|null>}  null если отмена
+ */
+function peAskPassword(title, desc, needName = false) {
+    return new Promise(resolve => {
+        const modal = document.getElementById('pe-password-modal');
+        const pwdInput = document.getElementById('pe-pwd-input');
+        const nameRow = document.getElementById('pe-pwd-name-row');
+        const nameInput = document.getElementById('pe-pwd-name-input');
+        const errEl = document.getElementById('pe-pwd-error');
+        const confirmBtn = document.getElementById('pe-pwd-confirm');
+        const cancelBtn = document.getElementById('pe-pwd-cancel');
+        const closeBtn = document.getElementById('pe-pwd-close');
+
+        document.getElementById('pe-pwd-title').textContent = title;
+        document.getElementById('pe-pwd-desc').textContent = desc;
+        pwdInput.value = '';
+        nameInput.value = '';
+        errEl.textContent = '';
+        errEl.classList.add('hidden');
+        nameRow.classList.toggle('hidden', !needName);
+
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        (needName ? nameInput : pwdInput).focus();
+
+        function cleanup() {
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            confirmBtn.removeEventListener('click', onConfirm);
+            cancelBtn.removeEventListener('click', onCancel);
+            closeBtn.removeEventListener('click', onCancel);
+            pwdInput.removeEventListener('keydown', onKey);
+        }
+
+        function onConfirm() {
+            const pwd = pwdInput.value.trim();
+            const name = nameInput.value.trim();
+            if (!pwd) {
+                errEl.textContent = 'Введите пароль';
+                errEl.classList.remove('hidden');
+                pwdInput.focus();
+                return;
+            }
+            if (needName && !name) {
+                errEl.textContent = 'Введите имя промпта';
+                errEl.classList.remove('hidden');
+                nameInput.focus();
+                return;
+            }
+            cleanup();
+            resolve({ password: pwd, name });
+        }
+
+        function onCancel() { cleanup(); resolve(null); }
+
+        function onKey(e) { if (e.key === 'Enter') onConfirm(); }
+
+        confirmBtn.addEventListener('click', onConfirm);
+        cancelBtn.addEventListener('click', onCancel);
+        closeBtn.addEventListener('click', onCancel);
+        pwdInput.addEventListener('keydown', onKey);
+    });
+}
+
+// ──── Инициализация ──────────────────────────────────────────
 
 async function peInitEditor() {
     peLoad();
@@ -878,49 +1023,19 @@ async function peInitEditor() {
         console.error('Не удалось загрузить промпты', e);
     }
 
-    // Установить первый стиль по умолчанию
+    // Установить первый ключ по умолчанию для каждой вкладки
     const styles = promptEditor.originals['step2_style'] || {};
-    const styleKeys = Object.keys(styles);
-    promptEditor.activeStyleKey = styleKeys[0] || null;
+    const step3 = promptEditor.originals['step3'] || {};
+
+    if (!promptEditor.activeStyleKey || promptEditor.activeKey === 'step2_style') {
+        promptEditor.activeStyleKey = Object.keys(styles)[0] || null;
+    }
+    if (promptEditor.activeKey === 'step3') {
+        promptEditor.activeStyleKey = Object.keys(step3)[0] || 'default';
+    }
 
     peRenderEditor();
     peUpdateTabStyle();
-}
-
-function peUpdateTabStyle() {
-    document.querySelectorAll('.prompt-tab').forEach(btn => {
-        const isActive = btn.dataset.key === promptEditor.activeKey;
-        btn.classList.toggle('active', isActive);
-        btn.classList.toggle('border-brand-main', isActive);
-        btn.classList.toggle('text-brand-main', isActive);
-        btn.classList.toggle('bg-brand-lightBg', isActive);
-        btn.classList.toggle('border-transparent', !isActive);
-        btn.classList.toggle('text-gray-500', !isActive);
-    });
-
-    // Стайл-селект: показываем/скрываем
-    let styleSelector = document.getElementById('pe-style-selector');
-    if (promptEditor.activeKey === 'step2_style') {
-        if (!styleSelector) {
-            styleSelector = document.createElement('select');
-            styleSelector.id = 'pe-style-selector';
-            styleSelector.className = 'pe-style-select text-sm border-2 border-gray-200 rounded-lg px-3 py-1.5 text-brand-dark';
-            const phBox = document.getElementById('prompt-placeholders');
-            if (phBox && phBox.parentNode) phBox.parentNode.insertBefore(styleSelector, phBox);
-
-            styleSelector.addEventListener('change', () => {
-                promptEditor.activeStyleKey = styleSelector.value;
-                peRenderEditor();
-            });
-        }
-        const styles = promptEditor.originals['step2_style'] || {};
-        styleSelector.innerHTML = Object.keys(styles).map(sk =>
-            `<option value="${sk}"${sk === promptEditor.activeStyleKey ? ' selected' : ''}>${sk}</option>`
-        ).join('');
-        styleSelector.classList.remove('hidden');
-    } else {
-        if (styleSelector) styleSelector.classList.add('hidden');
-    }
 }
 
 function peInitUI() {
@@ -930,11 +1045,13 @@ function peInitUI() {
     const textarea = document.getElementById('prompt-editor-text');
     const saveSessionBtn = document.getElementById('prompt-save-session-btn');
     const saveDiskBtn = document.getElementById('prompt-save-disk-btn');
+    const createBtn = document.getElementById('prompt-create-btn');
+    const deleteBtn = document.getElementById('prompt-delete-btn');
     const resetBtn = document.getElementById('prompt-reset-btn');
 
     if (!card || !toggle) return;
 
-    // Восстанавливаем состояние открытия
+    // Восстанавливаем состояние
     if (localStorage.getItem(LS_EDITOR_OPEN) === '1') {
         card.classList.remove('hidden');
         peInitEditor();
@@ -952,19 +1069,13 @@ function peInitUI() {
         localStorage.setItem(LS_EDITOR_OPEN, '0');
     });
 
-    // Переключение вкладок промптов
+    // Переключение вкладок
     document.querySelectorAll('.prompt-tab').forEach(btn => {
         btn.addEventListener('click', () => {
-            if (textarea) {
-                // Сохраняем текущее значение в сессию перед переключением
-                peApplyToSession(textarea.value);
-            }
+            if (textarea) peApplyToSession(textarea.value);
             promptEditor.activeKey = btn.dataset.key;
-            if (promptEditor.activeKey === 'step2_style') {
-                const styles = promptEditor.originals['step2_style'] || {};
-                const keys = Object.keys(styles);
-                promptEditor.activeStyleKey = keys[0] || null;
-            }
+            const pool = promptEditor.originals[promptEditor.activeKey] || {};
+            promptEditor.activeStyleKey = Object.keys(pool)[0] || null;
             peRenderEditor();
             peUpdateTabStyle();
         });
@@ -977,56 +1088,49 @@ function peInitUI() {
         });
     }
 
-    // Применить на сессию
+    // ── Применить на сессию ──
     if (saveSessionBtn) saveSessionBtn.addEventListener('click', () => {
         if (!textarea) return;
         const text = textarea.value;
-        const required = PROMPT_PLACEHOLDERS[promptEditor.activeKey] || [];
-        const missing = required.filter(ph => !text.includes(ph));
-        if (missing.length > 0) {
-            peSetStatusMsg(`Добавьте плейсхолдеры: ${missing.join(', ')}`, true);
-            return;
-        }
+        if (!peValidatePlaceholders(text)) return;
         peApplyToSession(text);
         peSave();
         peSetStatusMsg('Применено на текущую сессию ✓');
     });
 
-    // Сохранить на диск
+    // ── Перезаписать на диск ──
     if (saveDiskBtn) saveDiskBtn.addEventListener('click', async () => {
         if (!textarea) return;
         const text = textarea.value;
-        const required = PROMPT_PLACEHOLDERS[promptEditor.activeKey] || [];
-        const missing = required.filter(ph => !text.includes(ph));
-        if (missing.length > 0) {
-            peSetStatusMsg(`Добавьте плейсхолдеры: ${missing.join(', ')}`, true);
-            return;
-        }
+        if (!peValidatePlaceholders(text)) return;
+
+        const result = await peAskPassword(
+            'Перезапись промпта',
+            `Промпт «${promptEditor.activeStyleKey}» будет изменён на диске. Это действие необратимо.`
+        );
+        if (!result) return;
+
         saveDiskBtn.disabled = true;
         try {
             const body = {
                 target: promptEditor.activeKey,
                 content: text,
-                style_key: promptEditor.activeKey === 'step2_style' ? promptEditor.activeStyleKey : null
+                style_key: promptEditor.activeStyleKey,
+                password: result.password,
             };
             const res = await fetch('/api/prompts/save', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
+                body: JSON.stringify(body),
             });
             const data = await res.json();
             if (data.ok) {
                 // Обновляем originals локально
-                if (promptEditor.activeKey === 'step2_style') {
-                    promptEditor.originals['step2_style'][promptEditor.activeStyleKey] = text;
-                } else {
-                    promptEditor.originals[promptEditor.activeKey] = text;
-                }
-                // Убираем из сессии (т.к. теперь это оригинал)
-                const sk = peGetSessionKey(promptEditor.activeKey, promptEditor.activeStyleKey);
+                (promptEditor.originals[promptEditor.activeKey] ??= {})[promptEditor.activeStyleKey] = text;
+                const sk = peGetSessionKey();
                 delete promptEditor.session[sk];
                 peSave();
-                peSetStatusMsg('Сохранено на диск ✓');
+                peSetStatusMsg('Перезаписано на диск ✓');
             } else {
                 peSetStatusMsg(data.error || 'Ошибка сохранения', true);
             }
@@ -1037,24 +1141,111 @@ function peInitUI() {
         }
     });
 
-    // Сбросить к оригиналу
+    // ── Создать новый промпт ──
+    if (createBtn) createBtn.addEventListener('click', async () => {
+        if (!textarea) return;
+        const text = textarea.value;
+        if (!peValidatePlaceholders(text)) return;
+
+        const result = await peAskPassword(
+            'Создание нового промпта',
+            'Введите имя для нового промпта и подтвердите паролем.',
+            true /* needName */
+        );
+        if (!result) return;
+
+        createBtn.disabled = true;
+        try {
+            const res = await fetch('/api/prompts/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    target: promptEditor.activeKey,
+                    name: result.name,
+                    content: text,
+                    password: result.password,
+                }),
+            });
+            const data = await res.json();
+            if (data.ok) {
+                // Добавляем в originals и переключаемся на новый
+                (promptEditor.originals[promptEditor.activeKey] ??= {})[result.name] = text;
+                promptEditor.activeStyleKey = result.name;
+                peUpdateTabStyle();
+                peRenderEditor();
+                peSetStatusMsg(`Промпт «${result.name}» создан ✓`);
+            } else {
+                peSetStatusMsg(data.error || 'Ошибка создания', true);
+            }
+        } catch (e) {
+            peSetStatusMsg('Ошибка сети', true);
+        } finally {
+            createBtn.disabled = false;
+        }
+    });
+
+    // ── Удалить промпт ──
+    if (deleteBtn) deleteBtn.addEventListener('click', async () => {
+        if (deleteBtn.disabled) return;
+        const name = promptEditor.activeStyleKey;
+
+        const result = await peAskPassword(
+            'Удаление промпта',
+            `Промпт «${name}» будет удалён безвозвратно.`
+        );
+        if (!result) return;
+
+        deleteBtn.disabled = true;
+        try {
+            const res = await fetch('/api/prompts/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    target: promptEditor.activeKey,
+                    name,
+                    password: result.password,
+                }),
+            });
+            const data = await res.json();
+            if (data.ok) {
+                const pool = promptEditor.originals[promptEditor.activeKey] || {};
+                delete pool[name];
+                // Убираем из сессии
+                delete promptEditor.session[peGetSessionKey()];
+                peSave();
+                // Переключаемся на первый оставшийся
+                promptEditor.activeStyleKey = Object.keys(pool)[0] || null;
+                peUpdateTabStyle();
+                peRenderEditor();
+                peSetStatusMsg(`Промпт «${name}» удалён ✓`);
+            } else {
+                peSetStatusMsg(data.error || 'Ошибка удаления', true);
+            }
+        } catch (e) {
+            peSetStatusMsg('Ошибка сети', true);
+        } finally {
+            deleteBtn.disabled = false;
+            peUpdateDeleteBtn();
+        }
+    });
+
+    // ── Сбросить к оригиналу ──
     if (resetBtn) resetBtn.addEventListener('click', () => {
-        const sk = peGetSessionKey(promptEditor.activeKey, promptEditor.activeStyleKey);
-        delete promptEditor.session[sk];
+        delete promptEditor.session[peGetSessionKey()];
         peSave();
         peRenderEditor();
         peSetStatusMsg('Сброшено к оригиналу');
     });
 }
 
-function peApplyToSession(text) {
-    const sk = peGetSessionKey(promptEditor.activeKey, promptEditor.activeStyleKey);
-    const orig = peGetOriginal();
-    if (text === orig) {
-        delete promptEditor.session[sk];
-    } else {
-        promptEditor.session[sk] = text;
+function peValidatePlaceholders(text) {
+    const required = PROMPT_PLACEHOLDERS[promptEditor.activeKey] || [];
+    const missing = required.filter(ph => !text.includes(ph));
+    if (missing.length > 0) {
+        peSetStatusMsg(`Добавьте плейсхолдеры: ${missing.join(', ')}`, true);
+        return false;
     }
+    return true;
 }
 
 /** Возвращает объект custom_prompts для передачи в API /api/query */
@@ -1063,14 +1254,13 @@ function peGetCustomPrompts() {
     const out = {};
     for (const [sk, val] of Object.entries(promptEditor.session)) {
         if (sk.startsWith('step2_style:')) {
-            // передаём только тот стиль, который выбран в UI как "стиль ответа"
             const styleKey = sk.replace('step2_style:', '');
             const currentStyle = document.getElementById('style-select')?.value;
-            if (styleKey === currentStyle) {
-                out['step2_style'] = val;
-            }
-        } else {
-            out[sk] = val;
+            if (styleKey === currentStyle) out['step2_style'] = val;
+        } else if (sk.startsWith('step3:')) {
+            // Передаём активный step3-промпт только если он выбран как «default»
+            const promptKey = sk.replace('step3:', '');
+            if (promptKey === 'default') out['step3'] = val;
         }
     }
     return Object.keys(out).length ? out : null;

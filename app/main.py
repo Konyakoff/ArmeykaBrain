@@ -324,22 +324,25 @@ async def get_config():
         "default_avatar": "Abigail_standing_office_front"
     }
 
+def _check_admin_password(password: Optional[str]) -> bool:
+    """Проверяет пароль администратора."""
+    return password == settings.admin_password
+
+
 @app.get("/api/prompts")
 async def get_prompts():
     """Возвращает текущие шаблоны промптов для редактора."""
     from app.core.prompt_manager import PromptManager as PM
-    core = PM.get_core_prompts()
     styles = PM.get_styles()
     audio = PM.get_audio_prompts()
 
-    prompts = {}
+    # Для step3 возвращаем все ключи кроме служебных (evaluation)
+    step3_keys = {k: v for k, v in audio.items() if k != "evaluation"}
 
-    # step2_style — отдаём все ключи (один ключ = один стиль), но в редактор
-    # попадает текущий стиль. Возвращаем полный словарь.
-    prompts["step2_style"] = {k: v for k, v in styles.items()}
-
-    # step3 — аудиосценарий
-    prompts["step3"] = audio.get("default", "")
+    prompts = {
+        "step2_style": {k: v for k, v in styles.items()},
+        "step3": step3_keys,
+    }
 
     return JSONResponse(content={"prompts": prompts})
 
@@ -348,14 +351,56 @@ class SavePromptRequest(BaseModel):
     target: str
     content: str
     style_key: Optional[str] = None
+    password: Optional[str] = None
+
+
+class CreatePromptRequest(BaseModel):
+    target: str
+    name: str
+    content: str
+    password: Optional[str] = None
+
+
+class DeletePromptRequest(BaseModel):
+    target: str
+    name: str
+    password: Optional[str] = None
 
 
 @app.post("/api/prompts/save")
 async def save_prompt(req: SavePromptRequest):
-    """Сохраняет изменённый промпт на диск и инвалидирует кэш."""
+    """Сохраняет изменённый промпт на диск (требует пароль админа)."""
+    if not _check_admin_password(req.password):
+        return JSONResponse(content={"ok": False, "error": "Неверный пароль администратора"}, status_code=403)
     from app.core.prompt_manager import PromptManager as PM
     try:
         PM.save_prompt(req.target, req.content, req.style_key)
+        return JSONResponse(content={"ok": True})
+    except ValueError as e:
+        return JSONResponse(content={"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.post("/api/prompts/create")
+async def create_prompt(req: CreatePromptRequest):
+    """Создаёт новый именованный промпт (требует пароль админа)."""
+    if not _check_admin_password(req.password):
+        return JSONResponse(content={"ok": False, "error": "Неверный пароль администратора"}, status_code=403)
+    from app.core.prompt_manager import PromptManager as PM
+    try:
+        PM.create_prompt(req.target, req.name, req.content)
+        return JSONResponse(content={"ok": True})
+    except ValueError as e:
+        return JSONResponse(content={"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.post("/api/prompts/delete")
+async def delete_prompt(req: DeletePromptRequest):
+    """Удаляет промпт по имени (требует пароль админа)."""
+    if not _check_admin_password(req.password):
+        return JSONResponse(content={"ok": False, "error": "Неверный пароль администратора"}, status_code=403)
+    from app.core.prompt_manager import PromptManager as PM
+    try:
+        PM.delete_prompt(req.target, req.name)
         return JSONResponse(content={"ok": True})
     except ValueError as e:
         return JSONResponse(content={"ok": False, "error": str(e)}, status_code=400)
