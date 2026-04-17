@@ -5,9 +5,10 @@
 'use strict';
 
 /* ─── Глобальное состояние ─────────────────────────────────────────────── */
-let _tree = null;          // экземпляр ResultTree
-let _treeAvatars = [];     // список аватаров (загружается из /api/config)
-let _treeVoices  = [];     // список голосов ElevenLabs
+let _tree = null;              // экземпляр ResultTree
+let _treeAvatars    = [];      // список аватаров (загружается из /api/config)
+let _treeVoices     = [];      // список голосов ElevenLabs
+let _treeStep3Prompts = {};    // словарь step3-промптов {name: text} (из /api/prompts)
 
 /* ─── Константы ────────────────────────────────────────────────────────── */
 const NODE_ICONS  = { article:'fa-align-left', script:'fa-microphone', audio:'fa-headphones', video:'fa-film' };
@@ -748,7 +749,8 @@ function _buildTags(node, nodesMap) {
             // Primary source: params_json (tree-modal-generated scripts)
             let dur = p.audio_duration_sec;
             let wpm = p.audio_wpm;
-            let style = p.style;
+            // step3_prompt_key — новое поле; style — старое (обратная совместимость)
+            let promptLabel = p.step3_prompt_key || p.style;
             // Fallback for initial scripts (no params_json): look at first child audio node
             if (!dur && nodesMap) {
                 const childAudio = [...nodesMap.values()].find(
@@ -757,14 +759,14 @@ function _buildTags(node, nodesMap) {
                 if (childAudio) {
                     const cst = childAudio.stats_json || {};
                     const cp  = childAudio.params_json || {};
-                    dur   = cst.audio_duration_sec || cst.duration_sec;
-                    wpm   = wpm   || cst.wpm || cp.audio_wpm;
-                    style = style || cp.style || cp.elevenlabs_model;
+                    dur         = cst.audio_duration_sec || cst.duration_sec;
+                    wpm         = wpm         || cst.wpm || cp.audio_wpm;
+                    promptLabel = promptLabel || cp.step3_prompt_key || cp.style || cp.elevenlabs_model;
                 }
             }
-            if (dur)   parts.push(`${dur}с`);
-            if (wpm)   parts.push(`${wpm}wpm`);
-            if (style) parts.push(style);
+            if (dur)         parts.push(`${dur}с`);
+            if (wpm)         parts.push(`${wpm}wpm`);
+            if (promptLabel) parts.push(promptLabel);
             break;
         }
         case 'audio': {
@@ -868,6 +870,14 @@ function _buildModalForm(type) {
 
     if (type === 'script') {
         const wpmVal = _ls('audioWpm','150');
+        const savedPromptKey = _ls('step3PromptKey', 'default');
+
+        // Динамически строим список промптов из загруженных с сервера
+        const promptKeys = Object.keys(_treeStep3Prompts);
+        const promptOptions = promptKeys.length > 0
+            ? promptKeys.map(k => `<option value="${k}"${k === savedPromptKey ? ' selected' : ''}>${k}</option>`).join('')
+            : `<option value="default" selected>default</option>`;
+
         form.innerHTML = `
         <div class="gm-row">
             <label class="gm-label">Длительность аудио (сек)</label>
@@ -875,11 +885,8 @@ function _buildModalForm(type) {
         </div>
         ${_wpmSliderHtml(wpmVal)}
         <div class="gm-row">
-            <label class="gm-label">Стиль (Gemini)</label>
-            <select id="gm-style" class="gm-select">
-                <option value="audio_yur" selected>audio_yur (для аудио)</option>
-                <option value="telegram_yur">telegram_yur</option>
-            </select>
+            <label class="gm-label">Промпт сценария (Gemini)</label>
+            <select id="gm-step3-prompt" class="gm-select">${promptOptions}</select>
         </div>`;
 
     } else if (type === 'audio') {
@@ -997,7 +1004,7 @@ function _collectModalParams(type) {
         return {
             audio_duration_sec: parseInt(g('gm-duration')?.value || 60),
             audio_wpm: parseInt(g('gm-wpm')?.value || 150),
-            style: g('gm-style')?.value || 'audio_yur',
+            step3_prompt_key: g('gm-step3-prompt')?.value || 'default',
             gemini_model: 'gemini-3.1-pro-preview',
         };
     } else if (type === 'audio') {
@@ -1038,8 +1045,9 @@ function _saveModalParams(type, params) {
         localStorage.setItem('useSpeakerBoost', params.use_speaker_boost ? 'true' : 'false');
     }
     if (type === 'script') {
-        if (params.audio_duration_sec) localStorage.setItem('audioDuration', params.audio_duration_sec);
-        if (params.audio_wpm)          localStorage.setItem('audioWpm',      params.audio_wpm);
+        if (params.audio_duration_sec) localStorage.setItem('audioDuration',   params.audio_duration_sec);
+        if (params.audio_wpm)          localStorage.setItem('audioWpm',         params.audio_wpm);
+        if (params.step3_prompt_key)   localStorage.setItem('step3PromptKey',   params.step3_prompt_key);
     }
     if (type === 'video') {
         if (params.avatar_id)     localStorage.setItem('heygenAvatar', params.avatar_id);
@@ -1204,7 +1212,7 @@ async function initResultTree(slug) {
     const container = document.getElementById('result-tree');
     if (!container) return;
 
-    // Загружаем голоса и аватары (нужны для модального окна генерации)
+    // Загружаем голоса, аватары и step3-промпты (нужны для модального окна генерации)
     try {
         const cfg = await fetch('/api/config').then(r => r.json());
         _treeVoices  = cfg.voices  || [];
@@ -1212,6 +1220,15 @@ async function initResultTree(slug) {
         if (typeof windowAvatars !== 'undefined')        windowAvatars        = _treeAvatars;
         if (typeof windowPrivateAvatars !== 'undefined') windowPrivateAvatars = cfg.private_avatars || [];
     } catch (e) { console.warn('Не удалось загрузить config:', e); }
+
+    try {
+        const pm = await fetch('/api/prompts').then(r => r.json());
+        // Фильтруем служебные ключи, оставляем только пользовательские промпты
+        const HIDDEN_KEYS = new Set(['v1', 'v2', 'evaluation']);
+        _treeStep3Prompts = Object.fromEntries(
+            Object.entries(pm.prompts?.step3 || {}).filter(([k]) => !HIDDEN_KEYS.has(k))
+        );
+    } catch (e) { console.warn('Не удалось загрузить промпты:', e); }
 
     _tree = new ResultTree(slug);
     window._tree = _tree;

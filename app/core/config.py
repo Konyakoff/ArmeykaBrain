@@ -5,10 +5,7 @@ class Settings(BaseSettings):
     gemini_api_key: str
     elevenlabs_api_key: str
     heygen_api_key: str
-    
-    # Можно добавить и другие настройки, например:
-    # app_env: str = "production"
-    # log_level: str = "INFO"
+    admin_password: str = "Sergey"
 
     model_config = SettingsConfigDict(
         env_file=".env",

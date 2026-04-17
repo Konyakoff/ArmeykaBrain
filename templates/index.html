@@ -267,13 +267,51 @@
         </button>
         <button id="prompt-save-disk-btn"
             class="bg-green-600 hover:bg-green-700 text-white font-semibold py-2.5 px-6 rounded-xl flex items-center gap-2 text-sm shadow transition-colors">
-            <i class="fas fa-save"></i> Сохранить на диск
+            <i class="fas fa-save"></i> Перезаписать на диск
+        </button>
+        <button id="prompt-create-btn"
+            class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 px-6 rounded-xl flex items-center gap-2 text-sm shadow transition-colors">
+            <i class="fas fa-plus"></i> Создать новый
+        </button>
+        <button id="prompt-delete-btn"
+            class="bg-red-500 hover:bg-red-600 text-white font-semibold py-2.5 px-6 rounded-xl flex items-center gap-2 text-sm shadow transition-colors">
+            <i class="fas fa-trash"></i> Удалить
         </button>
         <button id="prompt-reset-btn"
             class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2.5 px-6 rounded-xl flex items-center gap-2 text-sm transition-colors">
             <i class="fas fa-undo"></i> Сбросить
         </button>
         <span id="prompt-save-status" class="text-sm text-gray-400 ml-auto"></span>
+    </div>
+</div>
+
+<!-- Модалка: ввод пароля администратора -->
+<div id="pe-password-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/40 backdrop-blur-sm">
+    <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm mx-4 relative">
+        <button id="pe-pwd-close" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-xl"><i class="fas fa-times"></i></button>
+        <h3 id="pe-pwd-title" class="text-lg font-bold text-brand-dark mb-2 heading-font">Подтверждение</h3>
+        <p id="pe-pwd-desc" class="text-sm text-gray-500 mb-4"></p>
+
+        <!-- Поле имени (для создания нового промпта) -->
+        <div id="pe-pwd-name-row" class="hidden mb-3">
+            <label class="text-xs font-semibold text-gray-600 mb-1 block">Имя нового промпта</label>
+            <input id="pe-pwd-name-input" type="text" placeholder="например: my_style_v2"
+                class="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm text-brand-dark focus:border-brand-main focus:outline-none">
+        </div>
+
+        <label class="text-xs font-semibold text-gray-600 mb-1 block">Пароль администратора</label>
+        <input id="pe-pwd-input" type="password" placeholder="Введите пароль..."
+            class="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm text-brand-dark focus:border-brand-main focus:outline-none mb-2">
+        <p id="pe-pwd-error" class="text-xs text-red-500 mb-3 hidden"></p>
+
+        <div class="flex gap-3 mt-2">
+            <button id="pe-pwd-cancel" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2.5 rounded-xl text-sm transition-colors">
+                Отмена
+            </button>
+            <button id="pe-pwd-confirm" class="flex-1 btn-organic text-white font-semibold py-2.5 rounded-xl text-sm shadow">
+                Подтвердить
+            </button>
+        </div>
     </div>
 </div>
 

@@ -87,9 +87,18 @@ async def generate_script_node(queue: asyncio.Queue, slug: str,
         wpm = params.get("audio_wpm", 150)
         model = params.get("gemini_model", "gemini-3.1-pro-preview")
 
+        # Резолвим step3-промпт по ключу (если указан)
+        prompt_key = params.get("step3_prompt_key", "default")
+        prompt_override = None
+        if prompt_key and prompt_key != "default":
+            from app.core.prompt_manager import PromptManager
+            audio_prompts = PromptManager.get_audio_prompts()
+            prompt_override = audio_prompts.get(prompt_key)
+
         await queue.put({"step": 3, "message": "Генерация аудиосценария через Gemini..."})
         t0 = time.time()
-        result = await generate_audio_script(article_text, duration=duration, wpm=wpm)
+        result = await generate_audio_script(article_text, duration=duration, wpm=wpm,
+                                             override=prompt_override)
         gen_time = round(time.time() - t0, 1)
 
         if not result or not result.script:

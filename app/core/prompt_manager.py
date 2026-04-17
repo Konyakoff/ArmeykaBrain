@@ -108,6 +108,9 @@ class PromptManager:
         "step1":       ("core_prompts.json",    "step1"),
     }
 
+    # Ключи, которые нельзя удалять (системные)
+    PROTECTED_KEYS = {"evaluation", "v1", "v2", "step1", "step2"}
+
     @classmethod
     def save_prompt(cls, target: str, content: str, style_key: str = None) -> None:
         """Сохраняет промпт в соответствующий JSON-файл и инвалидирует кэш."""
@@ -123,5 +126,53 @@ class PromptManager:
 
         data = cls._load_json(filename)
         data[key] = content
+        cls._save_json(filename, data)
+        cls.invalidate_cache()
+
+    @classmethod
+    def create_prompt(cls, target: str, name: str, content: str) -> None:
+        """Создаёт новый именованный промпт."""
+        if target not in cls.SAVE_TARGETS:
+            raise ValueError(f"Неизвестный target: {target}")
+        if not name or not name.strip():
+            raise ValueError("Имя промпта не может быть пустым")
+
+        name = name.strip()
+        filename, _ = cls.SAVE_TARGETS[target]
+
+        if target == "step3":
+            # Для step3 — сохраняем под именем как отдельный ключ
+            # «default» остаётся активным, новые хранятся рядом
+            filename = "prompts_audio.json"
+        elif target == "step2_style":
+            filename = "styles.json"
+
+        data = cls._load_json(filename)
+        if name in data:
+            raise ValueError(f"Промпт с именем «{name}» уже существует")
+        data[name] = content
+        cls._save_json(filename, data)
+        cls.invalidate_cache()
+
+    @classmethod
+    def delete_prompt(cls, target: str, name: str) -> None:
+        """Удаляет промпт по имени."""
+        if target not in cls.SAVE_TARGETS:
+            raise ValueError(f"Неизвестный target: {target}")
+        if not name:
+            raise ValueError("Имя промпта не указано")
+        if name in cls.PROTECTED_KEYS:
+            raise ValueError(f"Промпт «{name}» является системным и не может быть удалён")
+
+        filename, default_key = cls.SAVE_TARGETS[target]
+
+        # Для step3 нельзя удалить 'default'
+        if target == "step3" and name == "default":
+            raise ValueError("Нельзя удалить основной промпт аудиосценария (default)")
+
+        data = cls._load_json(filename)
+        if name not in data:
+            raise ValueError(f"Промпт «{name}» не найден")
+        del data[name]
         cls._save_json(filename, data)
         cls.invalidate_cache()
