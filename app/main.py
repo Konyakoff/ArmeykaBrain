@@ -812,9 +812,9 @@ async def view_result_page(request: Request, slug: str):
 from app.db.database import (
     get_tree_nodes, get_tree_node, update_tree_node_title,
     delete_tree_node_cascade, migrate_saved_result_to_tree,
-    update_tree_node_evaluation
+    update_tree_node_evaluation, update_tree_node_stats
 )
-from app.services.tree_service import dispatch_generate
+from app.services.tree_service import dispatch_generate, _generate_timecodes_background
 
 
 class GenerateNodeRequest(BaseModel):
@@ -879,6 +879,28 @@ async def delete_node(node_id: str):
 async def save_node_evaluation(node_id: str, req: dict):
     ok = update_tree_node_evaluation(node_id, req)
     return {"ok": ok}
+
+
+@app.post("/api/tree/node/{node_id}/timecodes")
+async def generate_node_timecodes(node_id: str):
+    """Ручной запуск генерации таймкодов Deepgram для аудио-узла."""
+    node = get_tree_node(node_id)
+    if not node:
+        raise NotFoundError("Узел не найден")
+    if node.get("node_type") != "audio":
+        raise ValidationError("Таймкоды поддерживаются только для аудио-узлов")
+    st = node.get("stats_json") or {}
+    if st.get("timecodes_json_url"):
+        return {"ok": False, "message": "Таймкоды уже сгенерированы"}
+    audio_url = node.get("content_url_original") or node.get("content_url")
+    if not audio_url:
+        raise ValidationError("Аудио-файл не найден в узле")
+
+    task = asyncio.create_task(_generate_timecodes_background(node_id, audio_url))
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
+
+    return {"ok": True, "message": "Генерация таймкодов запущена"}
 
 
 @app.post("/api/tree/{slug}/node/{parent_node_id}/generate")
