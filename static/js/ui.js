@@ -663,6 +663,82 @@ function downloadDB() {
     window.location.href = '/api/db/download';
 }
 
+// --- Обновление внешнего кэша (голоса, аватары) ---
+let _cacheRefreshInterval = null;
+
+async function initCacheStatus() {
+    try {
+        const r = await fetch('/api/cache/status');
+        if (!r.ok) return;
+        const data = await r.json();
+        _applyCacheStatus(data);
+    } catch (e) { /* тихо */ }
+}
+
+function _applyCacheStatus(data) {
+    const btn = document.getElementById('btn-refresh-cache');
+    const lbl = document.getElementById('refresh-cache-label');
+    if (!btn || !lbl) return;
+
+    if (data.running) {
+        lbl.textContent = 'обновление…';
+        btn.disabled = true;
+        btn.classList.add('opacity-50', 'cursor-not-allowed');
+        if (!_cacheRefreshInterval) {
+            _cacheRefreshInterval = setInterval(_pollCacheStatus, 3000);
+        }
+    } else {
+        btn.disabled = false;
+        btn.classList.remove('opacity-50', 'cursor-not-allowed');
+        if (_cacheRefreshInterval) {
+            clearInterval(_cacheRefreshInterval);
+            _cacheRefreshInterval = null;
+        }
+        const date = data.last_updated_at ? ` (${data.last_updated_at})` : '';
+        const errPart = data.error ? ' ⚠' : '';
+        lbl.textContent = `обновить базу${date}${errPart}`;
+        if (data.error) {
+            btn.title = data.error;
+        }
+    }
+}
+
+async function _pollCacheStatus() {
+    try {
+        const r = await fetch('/api/cache/status');
+        if (!r.ok) return;
+        const data = await r.json();
+        _applyCacheStatus(data);
+        // После завершения — перезагружаем конфиг (голоса/аватары в dropdown)
+        if (!data.running && typeof loadConfig === 'function') {
+            loadConfig();
+        }
+    } catch (e) { /* тихо */ }
+}
+
+async function refreshExternalCache() {
+    const btn = document.getElementById('btn-refresh-cache');
+    const lbl = document.getElementById('refresh-cache-label');
+    if (btn && btn.disabled) return;
+
+    try {
+        const r = await fetch('/api/cache/refresh', { method: 'POST' });
+        const data = await r.json();
+        if (data.ok) {
+            if (lbl) lbl.textContent = 'обновление…';
+            if (btn) {
+                btn.disabled = true;
+                btn.classList.add('opacity-50', 'cursor-not-allowed');
+            }
+            if (!_cacheRefreshInterval) {
+                _cacheRefreshInterval = setInterval(_pollCacheStatus, 3000);
+            }
+        }
+    } catch (e) {
+        console.error('refreshExternalCache error:', e);
+    }
+}
+
 function downloadTextFile(content, filename) {
     if (!content) return;
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });

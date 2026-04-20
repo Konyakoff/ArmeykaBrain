@@ -30,7 +30,7 @@ from app.core.exceptions import APIError, NotFoundError, ExternalAPIError, Valid
 from app.services.data_loader import GEMINI_MODELS
 from app.db.database import init_db, get_db_path, log_message, get_recent_results, get_result_by_slug, add_additional_audio, save_main_evaluation, save_additional_evaluation
 from app.services.core import process_query_logic, process_upgrade_to_audio_logic
-from app.services.elevenlabs_service import generate_audio, get_elevenlabs_voices
+from app.services.elevenlabs_service import generate_audio, get_elevenlabs_voices, _fetch_elevenlabs_voices_from_api
 from app.services.gemini_service import evaluate_audio_quality
 
 # Глобальный сет для жестких ссылок на фоновые задачи (чтобы их не удалял GC)
@@ -261,7 +261,7 @@ async def read_index(request: Request):
 
 from app.core.prompt_manager import PromptManager
 
-from app.services.heygen_service import get_heygen_avatars, get_heygen_private_avatars, check_video_status
+from app.services.heygen_service import get_heygen_avatars, get_heygen_private_avatars, check_video_status, _fetch_heygen_avatars_from_api, _fetch_heygen_private_avatars_from_api
 
 @app.get("/api/video_status")
 async def check_heygen_video(video_id: str):
@@ -300,13 +300,17 @@ async def get_config():
     styles_data = PromptManager.get_styles()
     models = [{"id": m["model_name"], "name": m["model_name"]} for m in GEMINI_MODELS]
     styles = [{"id": s, "name": s} for s in styles_data.keys()]
-    voices = await get_elevenlabs_voices()
-    avatars_raw = await get_heygen_avatars()
+
+    voices, avatars_raw, private_raw = await asyncio.gather(
+        get_elevenlabs_voices(),
+        get_heygen_avatars(),
+        get_heygen_private_avatars(),
+    )
+
     avatars = [
         {k: v for k, v in a.items() if not k.startswith("_")}
         for a in avatars_raw
     ]
-    private_raw = await get_heygen_private_avatars()
     private_avatars = [
         {k: v for k, v in a.items() if not k.startswith("_")}
         for a in private_raw
@@ -706,6 +710,78 @@ async def download_db():
         )
     else:
         raise NotFoundError("База данных не найдена")
+
+
+# --- Обновление внешнего кэша ---
+_cache_update_status = {
+    "running": False,
+    "last_updated_at": None,  # ISO timestamp
+    "error": None,
+}
+
+def _get_cache_last_updated() -> Optional[str]:
+    """Определяет время последнего обновления по mtime кэш-файлов."""
+    import os as _os
+    files = [
+        "db/heygen_avatars_cache.json",
+        "db/heygen_private_avatars_cache.json",
+        "db/elevenlabs_voices_cache.json",
+    ]
+    mtimes = []
+    for f in files:
+        if _os.path.exists(f):
+            mtimes.append(_os.path.getmtime(f))
+    if not mtimes:
+        return None
+    import datetime
+    ts = min(mtimes)  # берём самый старый, чтобы не вводить в заблуждение
+    return datetime.datetime.fromtimestamp(ts).strftime("%d.%m.%Y %H:%M")
+
+
+@app.get("/api/cache/status")
+async def get_cache_status():
+    """Возвращает статус обновления внешнего кэша."""
+    return {
+        "running": _cache_update_status["running"],
+        "last_updated_at": _cache_update_status["last_updated_at"] or _get_cache_last_updated(),
+        "error": _cache_update_status["error"],
+    }
+
+
+@app.post("/api/cache/refresh")
+async def refresh_cache():
+    """Запускает фоновое обновление всех внешних кэшей (HeyGen + ElevenLabs)."""
+    if _cache_update_status["running"]:
+        return {"ok": False, "message": "Обновление уже выполняется"}
+
+    async def _do_refresh():
+        _cache_update_status["running"] = True
+        _cache_update_status["error"] = None
+        errors = []
+        try:
+            results = await asyncio.gather(
+                _fetch_heygen_avatars_from_api(),
+                _fetch_heygen_private_avatars_from_api(),
+                _fetch_elevenlabs_voices_from_api(),
+                return_exceptions=True,
+            )
+            for r in results:
+                if isinstance(r, Exception):
+                    errors.append(str(r))
+        except Exception as e:
+            errors.append(str(e))
+        finally:
+            import datetime
+            _cache_update_status["running"] = False
+            _cache_update_status["last_updated_at"] = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
+            if errors:
+                _cache_update_status["error"] = "; ".join(errors)
+
+    task = asyncio.create_task(_do_refresh())
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
+
+    return {"ok": True, "message": "Обновление запущено"}
 
 @app.get("/api/history")
 async def get_history(tab: str = "text"):

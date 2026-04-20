@@ -119,33 +119,38 @@ def translate_label(label: str) -> str:
     return ", ".join(translated_parts)
 
 async def get_elevenlabs_voices() -> list:
+    """Возвращает голоса из in-memory кэша или файла. Без автообновления по TTL."""
     global _voices_cache
     if _voices_cache:
         return _voices_cache
-        
-    # Пытаемся загрузить из кэш-файла
-    if os.path.exists(CACHE_FILE):
-        file_age = time.time() - os.path.getmtime(CACHE_FILE)
-        if file_age < CACHE_TTL:
-            try:
-                with open(CACHE_FILE, "r", encoding="utf-8") as f:
-                    _voices_cache = json.load(f)
-                    return _voices_cache
-            except Exception as e:
-                print(f"Ошибка чтения кэша ElevenLabs: {e}")
 
+    # Всегда читаем из файла (без проверки возраста)
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                _voices_cache = json.load(f)
+                return _voices_cache
+        except Exception as e:
+            print(f"Ошибка чтения кэша ElevenLabs: {e}")
+
+    return []
+
+
+async def _fetch_elevenlabs_voices_from_api() -> list:
+    """Загружает свежие голоса из ElevenLabs API. Используется только при явном обновлении."""
     api_key = settings.elevenlabs_api_key
     if not api_key:
         return []
-        
+
     url = "https://api.elevenlabs.io/v1/voices"
     headers = {
         "Accept": "application/json",
         "xi-api-key": api_key
     }
-    
+
+    timeout = aiohttp.ClientTimeout(total=20)
     try:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(url, headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
@@ -156,7 +161,6 @@ async def get_elevenlabs_voices() -> list:
                         name_parts = orig_name.split(" - ", 1)
                         if len(name_parts) == 2:
                             human_name = name_parts[0]
-                            # Sometimes the description in name uses " and "
                             desc_to_translate = name_parts[1].replace(" and ", ", ")
                             translated_desc = translate_label(desc_to_translate)
                             final_name = f"{human_name} - {translated_desc}" if translated_desc else orig_name
@@ -168,35 +172,34 @@ async def get_elevenlabs_voices() -> list:
                         age = translate_label(labels.get("age", ""))
                         descriptive = translate_label(labels.get("descriptive", ""))
                         use_case = translate_label(labels.get("use_case", ""))
-                        
+
                         desc_parts = [p for p in [gender, age, descriptive, use_case] if p]
                         desc_str = ", ".join(desc_parts)
 
-                        # category: 'premade' — публичные голоса ElevenLabs,
-                        # 'cloned' / 'professional' / 'generated' — пользовательские голоса
                         raw_category = v.get("category", "premade")
                         is_my_voice = raw_category in ("cloned", "professional", "generated")
                         category = "my" if is_my_voice else "public"
-                        
+
                         extracted.append({
                             "voice_id": v.get("voice_id"),
                             "name": final_name,
                             "description": desc_str,
                             "category": category
                         })
-                    _voices_cache = extracted
-                    
-                    # Сохраняем в кэш-файл
+
+                    # Сохраняем в кэш-файл и обновляем in-memory
                     try:
                         os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
                         with open(CACHE_FILE, "w", encoding="utf-8") as f:
-                            json.dump(_voices_cache, f, ensure_ascii=False, indent=2)
+                            json.dump(extracted, f, ensure_ascii=False, indent=2)
                     except Exception as e:
                         print(f"Ошибка записи кэша ElevenLabs: {e}")
-                        
-                    return _voices_cache
+
+                    global _voices_cache
+                    _voices_cache = extracted
+                    return extracted
     except Exception as e:
-        print(f"Error fetching voices: {e}")
+        print(f"Error fetching ElevenLabs voices: {e}")
     return []
 
 async def generate_audio(text: str, model_id: str, voice_id: str = "pFZP5JQG7iQjIQuC4Bku", speed: float = 1.0, stability: float = 0.5, similarity_boost: float = 0.75, style: float = 0.25, use_speaker_boost: bool = True) -> tuple:
