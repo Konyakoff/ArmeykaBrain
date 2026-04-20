@@ -542,6 +542,8 @@ function _contentAudio(node) {
     const wrap = document.createElement('div');
     wrap.className = 'tn__content';
 
+    const st = node.stats_json || {};
+
     if (node.content_url) {
         const player = document.createElement('div');
         player.className = 'tn__audio-player';
@@ -553,7 +555,7 @@ function _contentAudio(node) {
         audio.src = node.content_url;
         player.appendChild(audio);
 
-        // Кнопка скачать
+        // Кнопка скачать MP3
         if (node.content_url_original || node.content_url) {
             const dl = document.createElement('a');
             dl.href = node.content_url_original || node.content_url;
@@ -563,11 +565,30 @@ function _contentAudio(node) {
             dl.title = 'Скачать';
             player.appendChild(dl);
         }
+
+        // Иконки таймкодов (JSON + VTT) — если уже есть
+        if (st.timecodes_json_url) {
+            const jsonLink = document.createElement('a');
+            jsonLink.href = st.timecodes_json_url;
+            jsonLink.download = '';
+            jsonLink.className = 'tn__tc-icon';
+            jsonLink.title = 'Скачать таймкоды JSON';
+            jsonLink.innerHTML = '<i class="fas fa-code"></i>';
+            player.appendChild(jsonLink);
+
+            const vttLink = document.createElement('a');
+            vttLink.href = st.timecodes_vtt_url;
+            vttLink.download = '';
+            vttLink.className = 'tn__tc-icon';
+            vttLink.title = 'Скачать субтитры VTT';
+            vttLink.innerHTML = '<i class="fas fa-closed-captioning"></i>';
+            player.appendChild(vttLink);
+        }
+
         wrap.appendChild(player);
     }
 
     const p = node.params_json || {};
-    const st = node.stats_json || {};
     const paramParts = [
         p.voice_name ? `Голос: ${p.voice_name}` : null,
         p.elevenlabs_model ? `Модель: ${p.elevenlabs_model}` : null,
@@ -604,14 +625,71 @@ function _contentAudio(node) {
         wrap.appendChild(evalBtn);
     }
 
+    // Кнопка +таймкоды — если таймкодов ещё нет и аудио завершено
+    if (!st.timecodes_json_url && node.status === 'completed') {
+        const tcBtn = document.createElement('button');
+        tcBtn.className = 'tn__tc-btn';
+        tcBtn.id = `tc-btn-${node.node_id}`;
+        tcBtn.innerHTML = '<i class="fas fa-closed-captioning"></i> +таймкоды';
+        tcBtn.title = 'Сгенерировать таймкоды через Deepgram ($0.0077/мин)';
+        tcBtn.onclick = () => _generateTimecodes(node.node_id);
+        wrap.appendChild(tcBtn);
+    }
+
     if (Object.keys(st).length) {
         wrap.appendChild(_statsRow([
             st.char_count ? `${st.char_count} символов` : null,
             st.generation_time_sec ? `${st.generation_time_sec}с` : null,
-            st.total_cost ? `$${Number(st.total_cost).toFixed(4)}` : null,
+            st.total_cost ? `ElevenLabs $${Number(st.total_cost).toFixed(4)}` : null,
+            st.timecodes_cost ? `Deepgram $${Number(st.timecodes_cost).toFixed(4)}` : null,
         ]));
     }
     return wrap;
+}
+
+async function _generateTimecodes(nodeId) {
+    const btn = document.getElementById(`tc-btn-${nodeId}`);
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> генерация…';
+    }
+    try {
+        const r = await fetch(`/api/tree/node/${nodeId}/timecodes`, { method: 'POST' });
+        const data = await r.json();
+        if (!data.ok) {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-closed-captioning"></i> +таймкоды';
+            }
+            alert(data.message || 'Ошибка запуска');
+            return;
+        }
+        // Поллим узел каждые 4с пока timecodes_json_url не появится
+        let attempts = 0;
+        const poll = setInterval(async () => {
+            attempts++;
+            if (attempts > 30) { clearInterval(poll); return; } // максимум 2 мин
+            try {
+                const nr = await fetch(`/api/tree/node/${nodeId}`);
+                const nd = await nr.json();
+                const nst = nd.stats_json || {};
+                if (nst.timecodes_json_url) {
+                    clearInterval(poll);
+                    // Перерисовываем дерево
+                    if (_tree) {
+                        const container = document.getElementById('result-tree');
+                        if (container) await _tree.init(container);
+                    }
+                }
+            } catch (e) { /* тихо */ }
+        }, 4000);
+    } catch (e) {
+        console.error('_generateTimecodes error:', e);
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-closed-captioning"></i> +таймкоды';
+        }
+    }
 }
 
 function _contentVideo(node) {

@@ -12,11 +12,12 @@ from uuid import uuid4
 from app.db.models import ResultNode
 from app.db.database import (
     save_tree_node, get_tree_node, update_tree_node_status,
-    count_siblings
+    count_siblings, update_tree_node_stats
 )
 from app.services.gemini_service import generate_audio_script, calculate_cost, get_model_info
 from app.services.elevenlabs_service import generate_audio as elevenlabs_generate
 from app.services.heygen_service import generate_video_from_audio, check_video_status, calculate_heygen_cost
+from app.services.deepgram_service import generate_timecodes as deepgram_generate_timecodes
 
 logger = logging.getLogger("tree_service")
 
@@ -214,12 +215,32 @@ async def generate_audio_node(queue: asyncio.Queue, slug: str,
         node.stats_json = json.dumps(stats, ensure_ascii=False)
         node = save_tree_node(node)
 
+        # Запускаем генерацию таймкодов через Deepgram фоном
+        asyncio.create_task(
+            _generate_timecodes_background(node.node_id, audio_url_orig)
+        )
+
         await queue.put({"step": "done", "node": _node_to_dict(node)})
 
     except Exception as e:
         logger.error(f"generate_audio_node error: {e}")
         update_tree_node_status(node.node_id, "failed")
         await queue.put({"step": "error", "message": str(e), "node_id": node.node_id})
+
+
+async def _generate_timecodes_background(node_id: str, audio_url: str) -> None:
+    """Фоновая задача: отправляет аудио в Deepgram и сохраняет таймкоды в stats_json узла."""
+    try:
+        result = await deepgram_generate_timecodes(audio_url)
+        extra_stats = {
+            "timecodes_json_url": result["json_url"],
+            "timecodes_vtt_url": result["vtt_url"],
+            "timecodes_cost": result["cost"],
+        }
+        update_tree_node_stats(node_id, extra_stats)
+        logger.info(f"Timecodes saved for node {node_id}: {result['json_url']}")
+    except Exception as e:
+        logger.error(f"_generate_timecodes_background error for {node_id}: {e}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
