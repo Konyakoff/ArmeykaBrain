@@ -91,24 +91,28 @@ def translate_avatar_name(name: str, gender: str) -> str:
     return f"{desc} ({gender_ru})"
 
 async def get_heygen_avatars():
-    """Получает список доступных аватаров."""
+    """Возвращает аватары из in-memory кэша или файла. Без автообновления по TTL."""
     global _avatars_cache
     if _avatars_cache is not None:
         return _avatars_cache
-        
-    # Пытаемся загрузить из кэш-файла
-    if os.path.exists(CACHE_FILE):
-        file_age = time.time() - os.path.getmtime(CACHE_FILE)
-        if file_age < CACHE_TTL:
-            try:
-                with open(CACHE_FILE, "r", encoding="utf-8") as f:
-                    _avatars_cache = json.load(f)
-                    return _avatars_cache
-            except Exception as e:
-                logger.error(f"Ошибка чтения кэша HeyGen: {e}")
 
+    # Всегда читаем из файла (без проверки возраста)
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                _avatars_cache = json.load(f)
+                return _avatars_cache
+        except Exception as e:
+            logger.error(f"Ошибка чтения кэша HeyGen: {e}")
+
+    return []
+
+
+async def _fetch_heygen_avatars_from_api() -> list:
+    """Загружает свежие аватары из HeyGen API. Используется только при явном обновлении."""
+    timeout = aiohttp.ClientTimeout(total=20)
     try:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(f"{HEYGEN_API_URL}/v2/avatars", headers=HEADERS) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -160,11 +164,12 @@ async def get_heygen_avatars():
                             "is_vertical_friendly": is_vertical,
                             "is_square_friendly": is_square
                         })
+                    global _avatars_cache
                     _avatars_cache = avatars
-                    
+
                     # Запускаем фоновую загрузку картинок
                     asyncio.create_task(sync_avatars_images(avatars))
-                    
+
                     # Сохраняем в кэш-файл
                     try:
                         os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
@@ -172,13 +177,13 @@ async def get_heygen_avatars():
                             json.dump(_avatars_cache, f, ensure_ascii=False, indent=2)
                     except Exception as e:
                         logger.error(f"Ошибка записи кэша HeyGen: {e}")
-                        
+
                     return avatars
                 else:
                     logger.error(f"Error fetching avatars: {await resp.text()}")
                     return []
     except Exception as e:
-        logger.error(f"HeyGen get_avatars error: {e}")
+        logger.error(f"HeyGen fetch_avatars_from_api error: {e}")
         return []
 
 PRIVATE_AVATARS_CACHE_FILE = "db/heygen_private_avatars_cache.json"
@@ -211,27 +216,31 @@ KNOWN_PRIVATE_AVATARS = [
 ]
 
 async def get_heygen_private_avatars() -> list:
-    """
-    Получает личные (private / talking photo) аватары пользователя через HeyGen API.
-    Использует кэш 24 часа. При ошибке возвращает хардкод KNOWN_PRIVATE_AVATARS.
-    """
+    """Возвращает личные аватары из in-memory кэша или файла. Без автообновления по TTL."""
     global _private_avatars_cache
     if _private_avatars_cache is not None:
         return _private_avatars_cache
 
+    # Всегда читаем из файла (без проверки возраста)
     if os.path.exists(PRIVATE_AVATARS_CACHE_FILE):
-        file_age = time.time() - os.path.getmtime(PRIVATE_AVATARS_CACHE_FILE)
-        if file_age < CACHE_TTL:
-            try:
-                with open(PRIVATE_AVATARS_CACHE_FILE, "r", encoding="utf-8") as f:
-                    _private_avatars_cache = json.load(f)
-                    return _private_avatars_cache
-            except Exception as e:
-                logger.error(f"Ошибка чтения кэша личных аватаров: {e}")
+        try:
+            with open(PRIVATE_AVATARS_CACHE_FILE, "r", encoding="utf-8") as f:
+                _private_avatars_cache = json.load(f)
+                return _private_avatars_cache
+        except Exception as e:
+            logger.error(f"Ошибка чтения кэша личных аватаров: {e}")
 
+    # Если кэш-файла нет — возвращаем хардкод
+    _private_avatars_cache = list(KNOWN_PRIVATE_AVATARS)
+    return _private_avatars_cache
+
+
+async def _fetch_heygen_private_avatars_from_api() -> list:
+    """Загружает свежие личные аватары из HeyGen API. Используется только при явном обновлении."""
     avatars = []
+    timeout = aiohttp.ClientTimeout(total=20)
     try:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             # Talking photos (портретные ИИ-аватары)
             async with session.get(
                 f"{HEYGEN_API_URL}/v1/talking_photo.list",
@@ -263,6 +272,7 @@ async def get_heygen_private_avatars() -> list:
         if ka["avatar_id"] not in existing_ids:
             avatars.append(ka)
 
+    global _private_avatars_cache
     _private_avatars_cache = avatars
 
     # Скачиваем превью
