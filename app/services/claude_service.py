@@ -8,7 +8,7 @@ import os
 import glob
 import asyncio
 from anthropic import AsyncAnthropic
-from app.services.data_loader import GEMINI_MODELS, find_rag_context
+from app.services.data_loader import ALL_MODELS, find_rag_context
 from app.core.config import settings
 from app.models.schemas import ArticleItem, Step1Result, Step2Result, Step3Result
 from app.core.prompt_manager import PromptManager
@@ -23,7 +23,7 @@ def get_client() -> AsyncAnthropic:
 
 
 def get_claude_model_info(model_name: str) -> dict | None:
-    for m in GEMINI_MODELS:
+    for m in ALL_MODELS:
         if m["model_name"] == model_name:
             return m
     return None
