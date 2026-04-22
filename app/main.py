@@ -197,6 +197,7 @@ class QueryRequest(BaseModel):
     heygen_engine: str = Field(default="avatar_iv", description="Версия движка: avatar_iv, avatar_iii")
     avatar_style: str = Field(default="auto", description="Стиль кадрирования: auto | normal | closeUp | circle")
     custom_prompts: Optional[dict] = Field(default=None, description="Кастомные шаблоны промптов для текущего запроса")
+    audio_prompt_name: Optional[str] = Field(default=None, description="Имя выбранного аудио-сценарий промпта (step3)")
 
 class AudioRequest(BaseModel):
     text: str = Field(..., min_length=1, description="Текст для озвучки")
@@ -479,7 +480,8 @@ async def process_user_query(req: QueryRequest):
             video_format=req.video_format,
             heygen_engine=req.heygen_engine,
             avatar_style=req.avatar_style if hasattr(req, 'avatar_style') else "auto",
-            custom_prompts=req.custom_prompts or {}
+            custom_prompts=req.custom_prompts or {},
+            audio_prompt_name=req.audio_prompt_name,
         )
     )
     # Сохраняем жесткую ссылку, чтобы сборщик мусора не удалил задачу
@@ -889,6 +891,7 @@ async def get_tree(slug: str):
             "tab_type": result_data.get("tab_type") or "text",
             "timestamp": result_data["timestamp"],
             "status": "pending",
+            "is_streaming": slug in active_streams,
             "nodes": [],
         }
 
@@ -966,8 +969,10 @@ async def generate_node_timecodes(node_id: str):
 @app.post("/api/tree/{slug}/node/{parent_node_id}/generate")
 async def generate_node(slug: str, parent_node_id: str, req: GenerateNodeRequest):
     """
-    SSE-эндпоинт генерации нового дочернего узла.
-    События: node_created, step N, done / error
+    Запускает генерацию нового дочернего узла.
+    Дожидается первого события node_created и сразу возвращает его как JSON,
+    чтобы фронтенд мог немедленно вставить узел в дерево.
+    Остаток прогресса доступен через GET /api/tree/node/{node_id}/stream.
     """
     queue = asyncio.Queue()
 
@@ -977,6 +982,34 @@ async def generate_node(slug: str, parent_node_id: str, req: GenerateNodeRequest
     background_tasks.add(task)
     task.add_done_callback(background_tasks.discard)
 
+    # Ждём первого события (node_created или error) — создание узла в БД занимает <100ms
+    try:
+        first_event = await asyncio.wait_for(queue.get(), timeout=10.0)
+    except asyncio.TimeoutError:
+        return JSONResponse({"step": "error", "message": "Таймаут создания узла"}, status_code=500)
+
+    if first_event.get("step") == "error":
+        return JSONResponse({"step": "error", "message": first_event.get("message", "Ошибка генерации")}, status_code=400)
+
+    # Сохраняем очередь по node_id для дальнейшего SSE-стрима
+    node_id = (first_event.get("node") or {}).get("node_id")
+    if node_id:
+        active_streams[node_id] = queue
+
+    return JSONResponse(first_event)
+
+
+@app.get("/api/tree/node/{node_id}/stream")
+async def stream_tree_node(node_id: str):
+    """
+    SSE-стрим прогресса генерации для уже созданного узла дерева.
+    Читает из active_streams[node_id] до события done/error.
+    """
+    queue = active_streams.get(node_id)
+    if not queue:
+        # Узел уже завершил генерацию или не найден — вернуть пустой поток
+        return EventSourceResponse(iter([]))
+
     async def generator():
         try:
             while True:
@@ -985,9 +1018,9 @@ async def generate_node(slug: str, parent_node_id: str, req: GenerateNodeRequest
                 if chunk.get("step") in ("done", "error"):
                     break
         except asyncio.CancelledError:
-            logger.info("Tree generate client disconnected, background continues")
-        except Exception as e:
-            yield {"data": json.dumps({"step": "error", "message": str(e)}, ensure_ascii=False)}
+            logger.info(f"Tree node {node_id} stream client disconnected, background continues")
+        finally:
+            active_streams.pop(node_id, None)
 
     return EventSourceResponse(generator())
 

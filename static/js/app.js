@@ -817,6 +817,7 @@ const LS_EDITOR_OPEN = 'pe_editor_open';
 const promptEditor = {
     activeKey: 'step2_style',
     activeStyleKey: null,  // для текущей вкладки — выбранный ключ промпта
+    step3Key: 'yur_bud_svoboden', // отдельно отслеживаем выбранный ключ step3
     originals: {},         // с сервера: { step2_style: {name: text, ...}, step3: {default: text, ...} }
     session: {},           // localStorage, только отличия от оригиналов
 };
@@ -828,10 +829,13 @@ function peLoad() {
     if (saved) {
         try { promptEditor.session = JSON.parse(saved); } catch (e) { promptEditor.session = {}; }
     }
+    const savedStep3Key = localStorage.getItem('pe_step3_key');
+    if (savedStep3Key) promptEditor.step3Key = savedStep3Key;
 }
 
 function peSave() {
     localStorage.setItem(LS_PROMPTS_KEY, JSON.stringify(promptEditor.session));
+    localStorage.setItem('pe_step3_key', promptEditor.step3Key || 'yur_bud_svoboden');
 }
 
 function peGetSessionKey() {
@@ -914,6 +918,9 @@ function peRebuildSelector(selectId, pool, currentKey) {
 
         sel.addEventListener('change', () => {
             promptEditor.activeStyleKey = sel.value;
+            if (promptEditor.activeKey === 'step3') {
+                promptEditor.step3Key = sel.value;
+            }
             peRenderEditor();
             peUpdateDeleteBtn();
         });
@@ -1056,7 +1063,12 @@ async function peInitEditor() {
         promptEditor.activeStyleKey = Object.keys(styles)[0] || null;
     }
     if (promptEditor.activeKey === 'step3') {
-        promptEditor.activeStyleKey = Object.keys(step3)[0] || 'default';
+        promptEditor.activeStyleKey = promptEditor.step3Key || Object.keys(step3)[0] || 'default';
+    }
+
+    // Если step3Key не был загружен из localStorage — установить дефолт из доступных ключей
+    if (!promptEditor.step3Key || !(promptEditor.step3Key in step3)) {
+        promptEditor.step3Key = ('yur_bud_svoboden' in step3) ? 'yur_bud_svoboden' : (Object.keys(step3)[0] || 'default');
     }
 
     peRenderEditor();
@@ -1275,18 +1287,26 @@ function peValidatePlaceholders(text) {
 
 /** Возвращает объект custom_prompts для передачи в API /api/query */
 function peGetCustomPrompts() {
-    if (!Object.keys(promptEditor.session).length) return null;
     const out = {};
+    // Step2 style override (only if edited)
     for (const [sk, val] of Object.entries(promptEditor.session)) {
         if (sk.startsWith('step2_style:')) {
             const styleKey = sk.replace('step2_style:', '');
             const currentStyle = document.getElementById('style-select')?.value;
             if (styleKey === currentStyle) out['step2_style'] = val;
-        } else if (sk.startsWith('step3:')) {
-            // Передаём активный step3-промпт только если он выбран как «default»
-            const promptKey = sk.replace('step3:', '');
-            if (promptKey === 'default') out['step3'] = val;
         }
+    }
+    // Step3: send the selected prompt key name and its text (custom or original)
+    const step3Key = promptEditor.step3Key || 'yur_bud_svoboden';
+    out['step3_name'] = step3Key;
+    // Check if this key has been edited in session
+    const sessionKey = `step3:${step3Key}`;
+    if (promptEditor.session[sessionKey] !== undefined) {
+        out['step3'] = promptEditor.session[sessionKey];
+    } else {
+        // Use the original server-side text for this named prompt
+        const pool = promptEditor.originals['step3'] || {};
+        if (pool[step3Key]) out['step3'] = pool[step3Key];
     }
     return Object.keys(out).length ? out : null;
 }
