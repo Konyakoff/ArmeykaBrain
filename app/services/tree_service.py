@@ -192,7 +192,7 @@ async def generate_audio_node(queue: asyncio.Queue, slug: str,
         speed = round(wpm / NATIVE_WPM, 3)
         speed = max(0.7, min(1.2, speed))
 
-        audio_url_web, audio_url_orig = await elevenlabs_generate(
+        audio_url_web, audio_url_orig, actual_duration_sec = await elevenlabs_generate(
             text=script_text,
             voice_id=voice_id,
             model_id=el_model,
@@ -207,6 +207,8 @@ async def generate_audio_node(queue: asyncio.Queue, slug: str,
         char_count = len(script_text)
         word_count = len(script_text.split())
         audio_duration = round(word_count / wpm * 60)
+        if actual_duration_sec > 0:
+            audio_duration = actual_duration_sec
         # Примерная стоимость ElevenLabs (~ $0.0003/символ для Eleven v3)
         cost_per_char = 0.0003 if 'turbo' not in el_model and 'flash' not in el_model else 0.00011
         audio_cost = round(char_count * cost_per_char, 4)
@@ -286,7 +288,7 @@ async def generate_video_node(queue: asyncio.Queue, slug: str,
         except: parent_stats = {}
 
     audio_voice_name = (parent_params.get("voice_name") or parent_stats.get("voice_name") or "")
-    audio_duration = parent_stats.get("audio_duration_sec", 60)
+    audio_duration = parent_stats.get("audio_duration_sec") or parent_stats.get("duration_sec", 60)
 
     # Добавляем голос из аудио в params видео, чтобы фронтенд мог его показать в заголовке
     params_with_voice = {**params, "voice_name": audio_voice_name}

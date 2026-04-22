@@ -248,7 +248,7 @@ async def generate_audio(text: str, model_id: str, voice_id: str = "pFZP5JQG7iQj
     audio_dir = os.path.join("static", "audio")
     os.makedirs(audio_dir, exist_ok=True)
     
-    # Сохраняем файл
+    # Save the file
     uuid_str = uuid.uuid4().hex[:8]
     filename_orig = f"audio_{uuid_str}_orig.mp3"
     filepath_orig = os.path.join(audio_dir, filename_orig)
@@ -259,7 +259,23 @@ async def generate_audio(text: str, model_id: str, voice_id: str = "pFZP5JQG7iQj
     filename_web = f"audio_{uuid_str}_web.mp3"
     filepath_web = os.path.join(audio_dir, filename_web)
     
+    actual_duration = 0.0
     try:
+        import subprocess
+        # Get actual duration using ffprobe
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filepath_orig],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=True
+        )
+        actual_duration = float(result.stdout.strip())
+    except Exception as e:
+        print(f"Error getting duration: {e}")
+    
+    try:
+        import subprocess
         subprocess.run(
             ["ffmpeg", "-y", "-i", filepath_orig, "-af", "adelay=1000|1000", filepath_web],
             check=True,
@@ -270,4 +286,4 @@ async def generate_audio(text: str, model_id: str, voice_id: str = "pFZP5JQG7iQj
         print(f"Error adding silence via ffmpeg: {e}")
         filename_web = filename_orig
         
-    return f"/static/audio/{filename_web}", f"/static/audio/{filename_orig}"
+    return f"/static/audio/{filename_web}", f"/static/audio/{filename_orig}", actual_duration

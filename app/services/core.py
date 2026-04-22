@@ -87,7 +87,7 @@ async def _poll_heygen_video_background(
 
     logger.error(f"[heygen_bg] video_id={video_id} slug={slug} превышено время ожидания 30 мин")
 
-async def process_query_logic(queue: asyncio.Queue, slug: str, question: str, model: str, style: str, context_threshold: int, send_prompts: bool, max_length: int = 4000, tab_type: str = "text", audio_duration: int = 60, elevenlabs_model: str = "eleven_v3", audio_wpm: int = 150, elevenlabs_voice: str = "FGY2WhTYpPnroxEErjIq", audio_style: float = 0.25, use_speaker_boost: bool = True, audio_stability: float = 0.5, audio_similarity_boost: float = 0.75, heygen_avatar_id: str = "Abigail_standing_office_front", video_format: str = "16:9", heygen_engine: str = "avatar_iv", avatar_style: str = "auto", custom_prompts: dict = None):
+async def process_query_logic(queue: asyncio.Queue, slug: str, question: str, model: str, style: str, context_threshold: int, send_prompts: bool, max_length: int = 4000, tab_type: str = "text", audio_duration: int = 60, elevenlabs_model: str = "eleven_v3", audio_wpm: int = 150, elevenlabs_voice: str = "FGY2WhTYpPnroxEErjIq", audio_style: float = 0.25, use_speaker_boost: bool = True, audio_stability: float = 0.5, audio_similarity_boost: float = 0.75, heygen_avatar_id: str = "Abigail_standing_office_front", video_format: str = "16:9", heygen_engine: str = "avatar_iv", avatar_style: str = "auto", custom_prompts: dict = None, audio_prompt_name: str = None):
     """
     Основная логика обработки запроса к ИИ.
     Выполняется в фоне и пишет промежуточные шаги в queue.
@@ -223,7 +223,8 @@ async def process_query_logic(queue: asyncio.Queue, slug: str, question: str, mo
                 "in_cost": in_cost_3,
                 "out_cost": out_cost_3,
                 "total_cost": in_cost_3 + out_cost_3,
-                "generation_time_sec": gen_time_3
+                "generation_time_sec": gen_time_3,
+                "prompt_name": audio_prompt_name or (_cp.get("step3_name") if _cp else None) or "default",
             }
             
             step3_audio_result = step3.script
@@ -241,13 +242,17 @@ async def process_query_logic(queue: asyncio.Queue, slug: str, question: str, mo
             
             try:
                 start_time_4 = time.time()
-                step4_audio_url_web, step4_audio_url_orig = await _run_with_heartbeat(
+                step4_audio_url_web, step4_audio_url_orig, actual_duration_sec = await _run_with_heartbeat(
                     generate_audio(step3_audio_result, elevenlabs_model, voice_id=elevenlabs_voice,
                                    speed=speed, stability=stability, similarity_boost=similarity_boost,
                                    style=audio_style, use_speaker_boost=use_speaker_boost),
                     queue, "Шаг 4: Синтезирую голос в ElevenLabs"
                 )
                 gen_time_4 = int(time.time() - start_time_4)
+                
+                # Использовать реальную длину аудио, если она доступна
+                if actual_duration_sec > 0:
+                    audio_duration = actual_duration_sec
                 
                 char_count = len(step3_audio_result)
                 if "turbo" in elevenlabs_model or "flash" in elevenlabs_model:
@@ -415,7 +420,7 @@ async def process_upgrade_to_audio_logic(queue: asyncio.Queue, slug: str, raw_an
         
         try:
             start_time_4 = time.time()
-            step4_audio_url_web, step4_audio_url_orig = await generate_audio(
+            step4_audio_url_web, step4_audio_url_orig, actual_duration_sec = await generate_audio(
                 step3_audio_result, 
                 elevenlabs_model, 
                 voice_id=elevenlabs_voice, 
@@ -426,6 +431,10 @@ async def process_upgrade_to_audio_logic(queue: asyncio.Queue, slug: str, raw_an
                 use_speaker_boost=use_speaker_boost
             )
             gen_time_4 = int(time.time() - start_time_4)
+            
+            # Использовать реальную длину аудио, если она доступна
+            if actual_duration_sec > 0:
+                audio_duration = actual_duration_sec
             
             char_count = len(step3_audio_result)
             if "turbo" in elevenlabs_model or "flash" in elevenlabs_model:

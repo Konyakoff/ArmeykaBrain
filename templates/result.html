@@ -19,7 +19,8 @@
         <div class="inline-flex items-center justify-center w-20 h-20 mb-6 bg-brand-lightBg rounded-full border-4 border-dashed border-brand-main animate-[spin_3s_linear_infinite]">
             <i class="fas fa-robot text-3xl text-brand-main animate-pulse"></i>
         </div>
-        <h3 class="text-2xl font-bold text-brand-dark heading-font">Загрузка результата...</h3>
+        <h3 id="loading-title" class="text-2xl font-bold text-brand-dark heading-font">Загрузка результата...</h3>
+        <p id="loading-desc" class="mt-3 text-gray-500 text-sm"></p>
     </div>
 </div>
 
@@ -79,9 +80,11 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/tree.js?v=4.0"></script>
+<script src="/static/js/tree.js?v=4.1"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => loadResult());
+
+let _resultEventSource = null;
 
 async function loadResult() {
     const parts = window.location.pathname.split('/');
@@ -96,20 +99,33 @@ async function loadResult() {
 
         const tabLabels = { text:'Текст', audio:'Аудио', video:'Видео' };
 
-        // Генерация ещё идёт — показываем pending-экран и опрашиваем каждые 5 сек
+        // Генерация ещё идёт
         if (data.status === 'pending') {
             const loadingTitle = document.getElementById('loading-title');
             const loadingDesc  = document.getElementById('loading-desc');
             if (loadingTitle) loadingTitle.textContent = 'Генерация в процессе...';
-            if (loadingDesc) {
-                loadingDesc.innerHTML = `
-                    Вопрос: <strong>${data.question || ''}</strong><br>
-                    <span class="text-sm text-gray-400 mt-1 block">Страница обновится автоматически по завершении генерации</span>`;
+
+            // Если на сервере есть активный SSE-поток — подключаемся к нему напрямую
+            if (data.is_streaming && !_resultEventSource) {
+                if (loadingDesc) {
+                    loadingDesc.innerHTML = `<span class="font-medium">${data.question || ''}</span>
+                        <br><span class="text-gray-400">Подключение к потоку генерации...</span>`;
+                }
+                _connectToStream(slug);
+            } else if (!data.is_streaming) {
+                // Поток недоступен (генерация идёт в фоне без активного стрима) — polling
+                if (loadingDesc) {
+                    loadingDesc.innerHTML = `<span class="font-medium">${data.question || ''}</span>
+                        <br><span class="text-gray-400">Страница обновится автоматически по завершении</span>`;
+                }
+                document.getElementById('loading-state').classList.remove('hidden');
+                setTimeout(loadResult, 5000);
             }
-            document.getElementById('loading-state').classList.remove('hidden');
-            setTimeout(loadResult, 5000);
             return;
         }
+
+        // Поток больше не нужен
+        if (_resultEventSource) { _resultEventSource.close(); _resultEventSource = null; }
 
         // Результат готов — заполняем мета-карточку
         document.getElementById('res-date').textContent     = data.timestamp || '';
@@ -131,6 +147,72 @@ async function loadResult() {
         errState.classList.remove('hidden');
         if (errMsg) errMsg.textContent = e.message || 'Ошибка загрузки.';
     }
+}
+
+function _connectToStream(slug) {
+    if (_resultEventSource) return; // уже подключены
+
+    document.getElementById('loading-state').classList.remove('hidden');
+
+    _resultEventSource = new EventSource(`/api/stream_query?slug=${slug}`);
+
+    _resultEventSource.onmessage = function(event) {
+        try {
+            const chunk = JSON.parse(event.data);
+            const loadingDesc = document.getElementById('loading-desc');
+
+            if (chunk.step === 'error') {
+                _resultEventSource.close(); _resultEventSource = null;
+                if (loadingDesc) loadingDesc.innerHTML =
+                    `<span class="text-red-500">Ошибка: ${chunk.message || ''}</span>`;
+                setTimeout(loadResult, 3000);
+                return;
+            }
+
+            if (chunk.step === 'done') {
+                _resultEventSource.close(); _resultEventSource = null;
+                // Результат сохранён — перезагружаем страницу с деревом
+                loadResult();
+                return;
+            }
+
+            if (chunk.step === 'heartbeat' || (chunk.step && chunk.message)) {
+                if (chunk.message && loadingDesc) {
+                    loadingDesc.innerHTML = `<span class="font-medium">${chunk.message}</span>`;
+                }
+                return;
+            }
+
+            if (chunk.step === 'partial') {
+                // Частичные данные уже есть — когда придёт done, loadResult покажет дерево
+                if (loadingDesc) {
+                    loadingDesc.innerHTML =
+                        `<span class="font-medium">Генерация продолжается, результаты будут доступны по завершении...</span>`;
+                }
+                return;
+            }
+
+            // Числовые step-сообщения: step 1, 2, 3…
+            if (chunk.message && loadingDesc) {
+                loadingDesc.innerHTML = `<span class="font-medium">${chunk.message}</span>`;
+            }
+
+        } catch(e) { console.error('SSE parse error', e); }
+    };
+
+    _resultEventSource.onerror = function() {
+        // Соединение потеряно — закрываем и переходим к polling
+        if (_resultEventSource) { _resultEventSource.close(); _resultEventSource = null; }
+        setTimeout(loadResult, 5000);
+    };
+}
+
+function showError(msg) {
+    document.getElementById('loading-state').classList.add('hidden');
+    const errState = document.getElementById('error-state');
+    const errMsg   = document.getElementById('error-message');
+    errState.classList.remove('hidden');
+    if (errMsg) errMsg.textContent = msg;
 }
 </script>
 {% endblock %}

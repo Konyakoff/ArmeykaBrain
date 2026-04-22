@@ -1188,59 +1188,69 @@ ResultTree.prototype.generateNode = async function(parentNodeId, targetType, par
     const slug = this.slug;
     const url  = `/api/tree/${slug}/node/${parentNodeId}/generate`;
 
-    let placeholderNodeId = null;
-
-    const resp = await fetch(url, {
-        method: 'POST',
-        headers: { 
-            'Content-Type': 'application/json',
-            'Accept': 'text/event-stream'
-        },
-        body: JSON.stringify({ target_type: targetType, params }),
-    });
-
-    if (!resp.ok) { alert('Ошибка запуска генерации'); return; }
-
-    const reader  = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let   buf     = '';
-
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-
-        const lines = buf.split('\n');
-        buf = lines.pop();
-
-        for (const line of lines) {
-            if (!line.startsWith('data:')) continue;
-            try {
-                const evt = JSON.parse(line.slice(5).trim());
-
-                if (evt.step === 'node_created' && evt.node) {
-                    placeholderNodeId = evt.node.node_id;
-                    this.insertNode(evt.node);
-                    // Раскрываем родителя если закрыт
-                    if (!this.expanded.has(parentNodeId)) this.toggle(parentNodeId);
-
-                } else if (evt.step === 'done' && evt.node) {
-                    this.updateNode(evt.node);
-                    this.expanded.add(evt.node.node_id);
-                    this._saveExpanded();
-                    if (!this.expanded.has(evt.node.node_id)) this.toggle(evt.node.node_id);
-
-                } else if (evt.step === 'error') {
-                    console.error('Tree generate error:', evt.message);
-                    if (placeholderNodeId) {
-                        const n = this.nodesMap.get(placeholderNodeId);
-                        if (n) { n.status = 'failed'; this.updateNode(n); }
-                    }
-                    alert('Ошибка генерации: ' + evt.message);
-                }
-            } catch (e) { /* ignore parse errors */ }
-        }
+    // Step 1: POST — немедленно получаем данные созданного узла (node_created)
+    let resp;
+    try {
+        resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target_type: targetType, params }),
+        });
+    } catch (e) {
+        alert('Ошибка сети при запуске генерации');
+        return;
     }
+
+    if (!resp.ok) {
+        let errMsg = 'Ошибка запуска генерации';
+        try { const j = await resp.json(); errMsg = j.message || errMsg; } catch {}
+        alert(errMsg);
+        return;
+    }
+
+    const data = await resp.json();
+
+    if (data.step === 'error') {
+        alert('Ошибка: ' + (data.message || 'неизвестная ошибка'));
+        return;
+    }
+
+    // Step 2: Вставляем узел немедленно — он появляется в дереве сразу
+    const node = data.node;
+    const nodeId = node.node_id;
+    this.insertNode(node);
+    if (!this.expanded.has(parentNodeId)) this.toggle(parentNodeId);
+
+    // Step 3: Открываем EventSource для получения прогресса и финального обновления
+    const es = new EventSource(`/api/tree/node/${nodeId}/stream`);
+
+    es.onmessage = (e) => {
+        try {
+            const evt = JSON.parse(e.data);
+
+            if (evt.step === 'done' && evt.node) {
+                this.updateNode(evt.node);
+                this.expanded.add(evt.node.node_id);
+                this._saveExpanded();
+                if (!this.expanded.has(evt.node.node_id)) this.toggle(evt.node.node_id);
+                es.close();
+                this._pollers.delete(nodeId);
+
+            } else if (evt.step === 'error') {
+                console.error('Tree generate error:', evt.message);
+                const n = this.nodesMap.get(nodeId);
+                if (n) { n.status = 'failed'; this.updateNode(n); }
+                alert('Ошибка генерации: ' + evt.message);
+                es.close();
+            }
+            // Промежуточные step-события (статус) можно использовать для обновления спиннера
+        } catch (err) { /* ignore parse errors */ }
+    };
+
+    es.onerror = () => {
+        // При ошибке соединения — закрываем ES, поллинг подхватит оставшееся
+        es.close();
+    };
 };
 
 /* ── Оценка качества аудио ─────────────────────────────────────────────── */

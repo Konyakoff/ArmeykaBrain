@@ -386,13 +386,21 @@ async def check_video_status(video_id: str):
         logger.error(f"HeyGen check_status error: {e}")
         raise
 
-def calculate_heygen_cost(duration_sec: int, heygen_engine: str) -> float:
-    import math
-    # 0.5 API credits per 30 seconds
-    minutes = max(0.5, math.ceil(duration_sec / 30) * 0.5)
-    # Avatar IV consumes 6 credits per minute. Avatar III consumes 1 credit per minute.
+def calculate_heygen_cost(duration_sec: float, heygen_engine: str) -> float:
+    """
+    Расчет стоимости видео в HeyGen (Pay-As-You-Go).
+    Один кредит стоит примерно $0.65.
+    Avatar IV расходует 6 кредитов в минуту.
+    Avatar III расходует 1 кредит в минуту.
+    """
+    # Avatar IV = 6 кредитов/мин, Avatar III = 1 кредит/мин.
     credits_per_min = 6 if heygen_engine == "avatar_iv" else 1
-    total_credits = minutes * credits_per_min
-    # Assume $0.15 per API credit based on generic pricing estimation
-    cost_per_credit = 0.15
-    return total_credits * cost_per_credit
+    cost_per_credit = 0.65
+    
+    # Обычно HeyGen добавляет около ~0.8 сек тишины в конце видео.
+    estimated_video_duration = duration_sec + 0.8
+    
+    # Стоимость в секунду: (кредитов_в_минуту * цена_кредита) / 60
+    cost_per_second = (credits_per_min * cost_per_credit) / 60
+    
+    return round(estimated_video_duration * cost_per_second, 2)
