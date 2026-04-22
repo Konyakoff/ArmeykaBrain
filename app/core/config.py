@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str
     heygen_api_key: str
     deepgram_api_key: str = ""
+    anthropic_api_key: str = ""
     admin_password: str = "Sergey"
 
     model_config = SettingsConfigDict(

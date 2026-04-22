@@ -2,8 +2,18 @@ import asyncio
 import logging
 import time
 from app.services.gemini_service import get_top_ids, get_expert_analysis, generate_audio_script, calculate_cost, get_model_info, prepare_expert_context
+from app.services.claude_service import (
+    get_top_ids_claude, get_expert_analysis_claude,
+    generate_audio_script_claude, calculate_claude_cost
+)
 from app.services.elevenlabs_service import generate_audio, get_elevenlabs_voices
 from app.db.database import save_result
+
+logger = logging.getLogger("core")
+
+
+def _is_claude(model: str) -> bool:
+    return model.startswith("claude-")
 
 logger = logging.getLogger("core")
 
@@ -15,7 +25,10 @@ async def process_query_logic(queue: asyncio.Queue, question: str, model: str, s
     try:
         await queue.put({"step": 1, "message": "Шаг 1: Ищем подходящие статьи и анализируем запрос..."})
         start_time_1 = time.time()
-        step1 = await get_top_ids(question, model)
+        if _is_claude(model):
+            step1 = await get_top_ids_claude(question, model)
+        else:
+            step1 = await get_top_ids(question, model)
         gen_time_1 = int(time.time() - start_time_1)
         
         if not step1.articles:
@@ -28,7 +41,10 @@ async def process_query_logic(queue: asyncio.Queue, question: str, model: str, s
             return
             
         combined_context, used_ids = prepare_expert_context(step1.articles, threshold=context_threshold)
-        in_cost_1, out_cost_1 = calculate_cost(step1.in_tokens, step1.out_tokens, model)
+        if _is_claude(model):
+            in_cost_1, out_cost_1 = calculate_claude_cost(step1.in_tokens, step1.out_tokens, model)
+        else:
+            in_cost_1, out_cost_1 = calculate_cost(step1.in_tokens, step1.out_tokens, model)
         
         step1_data = {
             "query_category": step1.query_category,
@@ -54,15 +70,23 @@ async def process_query_logic(queue: asyncio.Queue, question: str, model: str, s
         await queue.put({"step": 2, "message": "Шаг 2: Формируем экспертное заключение..."})
         start_time_2 = time.time()
         _cp = custom_prompts or {}
-        step2 = await get_expert_analysis(question, combined_context, style=style, max_length=max_length,
-                                          override_style=_cp.get("step2_style"))
+        if _is_claude(model):
+            step2 = await get_expert_analysis_claude(question, combined_context, style=style,
+                                                     max_length=max_length,
+                                                     override_style=_cp.get("step2_style"),
+                                                     model_name=model)
+            in_cost_2, out_cost_2 = calculate_claude_cost(step2.in_tokens, step2.out_tokens, model)
+        else:
+            step2 = await get_expert_analysis(question, combined_context, style=style,
+                                              max_length=max_length,
+                                              override_style=_cp.get("step2_style"))
+            in_cost_2, out_cost_2 = calculate_cost(step2.in_tokens, step2.out_tokens, "gemini-3.1-pro-preview")
         gen_time_2 = int(time.time() - start_time_2)
         
-        in_cost_2, out_cost_2 = calculate_cost(step2.in_tokens, step2.out_tokens, "gemini-3.1-pro-preview")
         total_cost = in_cost_1 + out_cost_1 + in_cost_2 + out_cost_2
         
         step2_stats = {
-            "model": "gemini-3.1-pro-preview",
+            "model": model,
             "in_tokens": step2.in_tokens,
             "out_tokens": step2.out_tokens,
             "in_cost": in_cost_2,
@@ -82,15 +106,22 @@ async def process_query_logic(queue: asyncio.Queue, question: str, model: str, s
         if tab_type in ["audio", "video"]:
             await queue.put({"step": 3, "message": f"Шаг 3: Генерируем короткий аудиосценарий на {audio_duration} секунд..."})
             start_time_3 = time.time()
-            step3 = await generate_audio_script(step2.answer, audio_duration, audio_wpm,
-                                                override=_cp.get("step3"))
+            if _is_claude(model):
+                step3 = await generate_audio_script_claude(step2.answer, audio_duration, audio_wpm,
+                                                           override=_cp.get("step3"), model_name=model)
+            else:
+                step3 = await generate_audio_script(step2.answer, audio_duration, audio_wpm,
+                                                    override=_cp.get("step3"))
             gen_time_3 = int(time.time() - start_time_3)
             
-            in_cost_3, out_cost_3 = calculate_cost(step3.in_tokens, step3.out_tokens, "gemini-3.1-pro-preview")
+            if _is_claude(model):
+                in_cost_3, out_cost_3 = calculate_claude_cost(step3.in_tokens, step3.out_tokens, model)
+            else:
+                in_cost_3, out_cost_3 = calculate_cost(step3.in_tokens, step3.out_tokens, "gemini-3.1-pro-preview")
             total_cost += in_cost_3 + out_cost_3
             
             step3_stats = {
-                "model": "gemini-3.1-pro-preview",
+                "model": model,
                 "in_tokens": step3.in_tokens,
                 "out_tokens": step3.out_tokens,
                 "in_cost": in_cost_3,
