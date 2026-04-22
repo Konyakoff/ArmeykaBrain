@@ -27,7 +27,7 @@ logger = logging.getLogger("api")
 
 from app.core.config import settings
 from app.core.exceptions import APIError, NotFoundError, ExternalAPIError, ValidationError, api_error_handler, global_exception_handler
-from app.services.data_loader import GEMINI_MODELS
+from app.services.data_loader import ALL_MODELS, GEMINI_MODELS, CLAUDE_MODELS
 from app.db.database import init_db, get_db_path, log_message, get_recent_results, get_result_by_slug, add_additional_audio, save_main_evaluation, save_additional_evaluation
 from app.services.core import process_query_logic, process_upgrade_to_audio_logic
 from app.services.elevenlabs_service import generate_audio, get_elevenlabs_voices, _fetch_elevenlabs_voices_from_api
@@ -298,7 +298,13 @@ async def get_config():
     Возвращает доступные модели и стили для заполнения селектов на фронтенде
     """
     styles_data = PromptManager.get_styles()
-    models = [{"id": m["model_name"], "name": m["model_name"]} for m in GEMINI_MODELS]
+    # Возвращаем модели, сгруппированные по провайдеру
+    models = [
+        {"id": m["model_name"],
+         "name": m.get("display_name", m["model_name"]),
+         "provider": m.get("provider", "gemini")}
+        for m in ALL_MODELS
+    ]
     styles = [{"id": s, "name": s} for s in styles_data.keys()]
 
     voices, avatars_raw, private_raw = await asyncio.gather(

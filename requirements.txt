@@ -9,3 +9,4 @@ jinja2
 aiohttp
 sse-starlette
 sqlmodel
+anthropic>=0.40.0

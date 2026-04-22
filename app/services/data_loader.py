@@ -110,5 +110,7 @@ def find_rag_context(file_name: str, item_number: str, section: str = "", subsec
     return filtered if filtered else matches
 
 # Предзагрузка данных при импорте модуля
-GEMINI_MODELS = load_gemini_models()
+ALL_MODELS    = load_gemini_models()
+GEMINI_MODELS = [m for m in ALL_MODELS if m.get("provider", "gemini") == "gemini"]
+CLAUDE_MODELS = [m for m in ALL_MODELS if m.get("provider") == "claude"]
 JSON_DB = load_json_db()

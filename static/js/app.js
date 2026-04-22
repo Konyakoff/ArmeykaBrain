@@ -193,9 +193,22 @@ async function loadConfig() {
         
         const savedModel = localStorage.getItem('selectedModel') || data.default_model;
         const modelSelect = document.getElementById('model-select');
-        modelSelect.innerHTML = data.models.map(m => 
-            `<option value="${m.id}" ${m.id === savedModel ? 'selected' : ''}>${m.name}</option>`
-        ).join('');
+
+        // Группируем модели по провайдеру
+        const geminiModels = data.models.filter(m => m.provider === 'gemini' || !m.provider);
+        const claudeModels = data.models.filter(m => m.provider === 'claude');
+        let modelsHtml = '';
+        if (geminiModels.length > 0) {
+            modelsHtml += `<optgroup label="Gemini (Google)">` +
+                geminiModels.map(m => `<option value="${m.id}" ${m.id === savedModel ? 'selected' : ''}>${m.name}</option>`).join('') +
+                `</optgroup>`;
+        }
+        if (claudeModels.length > 0) {
+            modelsHtml += `<optgroup label="Claude (Anthropic)">` +
+                claudeModels.map(m => `<option value="${m.id}" ${m.id === savedModel ? 'selected' : ''}>${m.name}</option>`).join('') +
+                `</optgroup>`;
+        }
+        modelSelect.innerHTML = modelsHtml;
         modelSelect.addEventListener('change', (e) => localStorage.setItem('selectedModel', e.target.value));
 
         const styleSelect = document.getElementById('style-select');
