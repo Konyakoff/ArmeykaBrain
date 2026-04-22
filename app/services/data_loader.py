@@ -3,7 +3,7 @@ import os
 import glob
 
 def load_gemini_models() -> list:
-    path = os.path.join("data", "gemini_models.json")
+    path = os.path.join("data", "ai_models.json")
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)

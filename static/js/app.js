@@ -323,6 +323,19 @@ function toggleHistory() {
     renderHistory();
 }
 
+function showEarlyResultLink(slug) {
+    if (!slug) return;
+    const box = document.getElementById('early-link-container');
+    const a   = document.getElementById('early-link-anchor');
+    const t   = document.getElementById('early-link-text');
+    
+    if (!box || !a || !t) return;
+    const url = `/text/${slug}`;
+    a.href = url;
+    t.textContent = window.location.origin + url;
+    box.classList.remove('hidden');
+}
+
 function resetUI() {
     const resultContainer = document.getElementById('result-container');
     if (resultContainer) {
@@ -400,6 +413,9 @@ async function sendQuery() {
     document.getElementById('floating-loader').classList.add('hidden');
     document.getElementById('prompts-container').classList.add('hidden');
     document.getElementById('result-link-container').classList.add('hidden');
+    const earlyLink = document.getElementById('early-link-container');
+    if (earlyLink) earlyLink.classList.add('hidden');
+    window._earlySlug = null;
     
     document.getElementById('loading-desc').textContent = "Инициализация...";
     
@@ -410,7 +426,8 @@ async function sendQuery() {
     currentAbortController = new AbortController();
 
     try {
-        const response = await fetch('/api/query', {
+        // Отправляем POST запрос для запуска генерации
+        const startResponse = await fetch('/api/query', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             signal: currentAbortController.signal,
@@ -438,137 +455,132 @@ async function sendQuery() {
             })
         });
 
-        if (!response.ok) {
+        if (!startResponse.ok) {
             let err = "Произошла ошибка сервера";
             try {
-                const errData = await response.json();
+                const errData = await startResponse.json();
                 err = errData.detail || errData.error || err;
             } catch(e) {}
             throw new Error(err);
         }
-
-        // We will use standard Fetch API to read the stream, but process it cleanly.
-        // Even simpler: since EventSource doesn't support POST with body easily, 
-        // we can fetch and read it properly by splitting chunks on '\n\n'
         
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let buffer = "";
+        const startData = await startResponse.json();
+        const slug = startData.slug;
+        if (!slug) throw new Error("Не получен slug от сервера");
+        
+        window._earlySlug = slug;
+        showEarlyResultLink(slug);
+        
+        // Подключаемся к SSE потоку через native EventSource (не буферизуется антивирусами)
         let finalData = null;
+        await new Promise((resolve, reject) => {
+            const eventSource = new EventSource(`/api/stream_query?slug=${slug}`);
+            
+            // Если пользователь отменяет запрос
+            currentAbortController.signal.addEventListener('abort', () => {
+                eventSource.close();
+                reject(new Error("Запрос отменен пользователем"));
+            });
+            
+            eventSource.onmessage = function(event) {
+                try {
+                    const chunk = JSON.parse(event.data);
+                    
+                    if (chunk.step === "error") {
+                        eventSource.close();
+                        reject(new Error(chunk.message));
+                        return;
+                    } else if (chunk.step === "done") {
+                        finalData = chunk.result;
+                        eventSource.close();
+                        resolve();
+                        return;
+                    } else if (chunk.step === "heartbeat") {
+                        if (chunk.message) {
+                            const desc = document.getElementById('loading-desc');
+                            const fl = document.getElementById('floating-loader-text');
+                            if (desc) desc.innerHTML = chunk.message;
+                            if (fl) {
+                                fl.innerHTML = chunk.message;
+                                const flBox = document.getElementById('floating-loader');
+                                if (flBox && successState.classList.contains('flex')) flBox.classList.remove('hidden');
+                            }
+                        }
+                    } else if (chunk.step === "partial") {
+                        loadingState.classList.add('hidden');
+                        successState.classList.remove('hidden');
+                        successState.classList.add('flex');
 
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            
-            buffer += decoder.decode(value, { stream: true });
-            
-            const parts = buffer.split(/\r?\n\r?\n/);
-            buffer = parts.pop(); 
-            
-            for (const part of parts) {
-                if (!part.trim()) continue;
-                
-                const lines = part.split(/\r?\n/);
-                let jsonData = null;
-                for (const line of lines) {
-                    if (line.startsWith('data:')) {
-                        try {
-                            // Extract JSON data after "data:" (allowing optional space)
-                            const jsonStr = line.substring(line.indexOf(':') + 1).trim();
-                            jsonData = JSON.parse(jsonStr);
-                        } catch (e) {
-                            console.error('Failed to parse SSE data', line);
+                        if (window._earlySlug) showEarlyResultLink(window._earlySlug);
+
+                        const data = chunk.data;
+                        if (data.step1_info) {
+                            document.getElementById('step1-info').innerHTML = formatStep1Info(data.step1_info);
+                            document.getElementById('card-step1').classList.remove('hidden');
                         }
-                    }
-                }
-                
-                if (!jsonData) continue;
-                
-                const chunk = jsonData;
-                
-                if (chunk.step === "error") {
-                    throw new Error(chunk.message);
-                } else if (chunk.step === "done") {
-                    finalData = chunk.result;
-                } else if (chunk.step === "partial") {
-                    loadingState.classList.add('hidden');
-                    successState.classList.remove('hidden');
-                    successState.classList.add('flex');
-                    
-                    const data = chunk.data;
-                    if (data.step1_info) {
-                        document.getElementById('step1-info').innerHTML = formatStep1Info(data.step1_info);
-                        document.getElementById('card-step1').classList.remove('hidden');
-                    }
-                    if (data.step1_stats) document.getElementById('step1-stats').innerHTML = formatStats(data.step1_stats, 1);
-                    
-                    if (data.answer) {
-                        document.getElementById('final-answer').innerHTML = marked.parse(data.answer);
-                        document.getElementById('card-step2').classList.remove('hidden');
-                    }
-                    if (data.step2_stats) document.getElementById('step2-stats').innerHTML = formatStats(data.step2_stats, 2);
-                    
-                    if (data.step3_audio) {
-                        document.getElementById('step3-audio-text').innerHTML = marked.parse(data.step3_audio);
-                        document.getElementById('step3-audio-container').classList.remove('hidden');
+                        if (data.step1_stats) document.getElementById('step1-stats').innerHTML = formatStats(data.step1_stats, 1);
                         
-                        const audioDuration = document.getElementById('audio-duration').value;
-                        const audioWpm = document.getElementById('audio-wpm').value;
-                        document.getElementById('step3-param-duration').textContent = audioDuration;
-                        document.getElementById('step3-param-wpm').textContent = audioWpm;
-                        document.getElementById('step3-audio-params').classList.remove('hidden');
-                    }
-                    if (data.step3_stats) document.getElementById('step3-stats').innerHTML = formatStats(data.step3_stats, 3);
-                    
-                    if (data.step4_audio_url) {
-                        // Will be handled in done, but we can set stats early
-                        if (data.step4_stats) {
-                            const badge = document.getElementById('step4-audio-badge');
-                            if (badge) badge.classList.add('hidden'); // hide old badge
-                            document.getElementById('step4-stats').innerHTML = formatStats(data.step4_stats, 4);
+                        if (data.answer) {
+                            document.getElementById('final-answer').innerHTML = marked.parse(data.answer);
+                            document.getElementById('card-step2').classList.remove('hidden');
                         }
-                    }
-                    
-                    if (data.step5_video_id) {
-                        document.getElementById('step5-video-container').classList.remove('hidden');
-                        if (data.step5_stats) {
-                            document.getElementById('step5-stats').innerHTML = formatStats(data.step5_stats, 5);
+                        if (data.step2_stats) document.getElementById('step2-stats').innerHTML = formatStats(data.step2_stats, 2);
+                        
+                        if (data.step3_audio) {
+                            document.getElementById('step3-audio-text').innerHTML = marked.parse(data.step3_audio);
+                            document.getElementById('step3-audio-container').classList.remove('hidden');
+                            
+                            const audioDuration = document.getElementById('audio-duration').value;
+                            const audioWpm = document.getElementById('audio-wpm').value;
+                            document.getElementById('step3-param-duration').textContent = audioDuration;
+                            document.getElementById('step3-param-wpm').textContent = audioWpm;
+                            document.getElementById('step3-audio-params').classList.remove('hidden');
                         }
-                        document.getElementById('step5-video-content').innerHTML = `
-                            <div class="flex flex-col items-center gap-3 w-full">
-                                <div class="bg-gray-100 rounded-xl p-8 flex flex-col items-center justify-center w-full max-w-2xl border-2 border-dashed border-gray-300">
-                                    <i class="fas fa-spinner fa-spin text-4xl text-indigo-500 mb-4"></i>
-                                    <p class="text-brand-dark font-medium text-center">Видео генерируется...</p>
-                                    <p class="text-sm text-gray-500 text-center mt-2">Это может занять несколько минут. Не закрывайте страницу или перейдите по ссылке результата позже.</p>
+                        if (data.step3_stats) document.getElementById('step3-stats').innerHTML = formatStats(data.step3_stats, 3);
+                        
+                        if (data.step4_audio_url) {
+                            if (data.step4_stats) {
+                                const badge = document.getElementById('step4-audio-badge');
+                                if (badge) badge.classList.add('hidden');
+                                document.getElementById('step4-stats').innerHTML = formatStats(data.step4_stats, 4);
+                            }
+                        }
+                        
+                        if (data.step5_video_id) {
+                            document.getElementById('step5-video-container').classList.remove('hidden');
+                            if (data.step5_stats) {
+                                document.getElementById('step5-stats').innerHTML = formatStats(data.step5_stats, 5);
+                            }
+                            document.getElementById('step5-video-content').innerHTML = `
+                                <div class="flex flex-col items-center gap-3 w-full">
+                                    <div class="bg-gray-100 rounded-xl p-8 flex flex-col items-center justify-center w-full max-w-2xl border-2 border-dashed border-gray-300">
+                                        <i class="fas fa-spinner fa-spin text-4xl text-indigo-500 mb-4"></i>
+                                        <p class="text-brand-dark font-medium text-center">Видео генерируется...</p>
+                                        <p class="text-sm text-gray-500 text-center mt-2">Это может занять несколько минут. Не закрывайте страницу или перейдите по ссылке результата позже.</p>
+                                    </div>
                                 </div>
-                            </div>
-                        `;
+                            `;
+                        }
+                    } else {
+                        if (chunk.message) {
+                            document.getElementById('loading-desc').innerHTML = chunk.message;
+                            const floatingLoader = document.getElementById('floating-loader-text');
+                            if (floatingLoader) {
+                                floatingLoader.innerHTML = chunk.message;
+                                document.getElementById('floating-loader').classList.remove('hidden');
+                            }
+                        }
                     }
-                } else {
-                    document.getElementById('loading-desc').innerHTML = chunk.message;
-                    const floatingLoader = document.getElementById('floating-loader-text');
-                    if (floatingLoader) {
-                        floatingLoader.innerHTML = chunk.message;
-                        document.getElementById('floating-loader').classList.remove('hidden');
-                    }
+                } catch(e) {
+                    console.error("Parse error", e);
                 }
-            }
-        }
-        
-        // Process any remaining buffer just in case the stream ended without a trailing newline pair
-        if (buffer.trim()) {
-            const lines = buffer.split(/\r?\n/);
-            for (const line of lines) {
-                if (line.startsWith('data:')) {
-                    try {
-                        const jsonStr = line.substring(line.indexOf(':') + 1).trim();
-                        const chunk = JSON.parse(jsonStr);
-                        if (chunk.step === "done") finalData = chunk.result;
-                        if (chunk.step === "error") throw new Error(chunk.message);
-                    } catch (e) {}
-                }
-            }
-        }
+            };
+            
+            eventSource.onerror = function(err) {
+                // Ignore transient errors, but log them
+                console.warn("EventSource error", err);
+            };
+        });
         
         if (!finalData) throw new Error("Не удалось получить результат от сервера.");
         

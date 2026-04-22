@@ -500,9 +500,8 @@ function selectAvatarFromModal(avatarId) {
         const inp = document.getElementById(currentAvatarTargetInput);
         if (inp) {
             inp.value = avatarId;
-            if (currentAvatarTargetInput === 'heygen-avatar') {
-                localStorage.setItem('heygenAvatar', avatarId);
-            }
+            // Сохраняем для любого поля выбора аватара (и главная форма, и дерево)
+            localStorage.setItem('heygenAvatar', avatarId);
         }
     }
 

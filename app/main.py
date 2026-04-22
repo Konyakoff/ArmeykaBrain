@@ -35,6 +35,7 @@ from app.services.gemini_service import evaluate_audio_quality
 
 # Глобальный сет для жестких ссылок на фоновые задачи (чтобы их не удалял GC)
 background_tasks = set()
+active_streams = {}
 
 app = FastAPI(title="ArmeykaBrain API")
 
@@ -280,15 +281,37 @@ async def check_heygen_video(video_id: str):
 
 @app.post("/api/update_video_result")
 async def update_video_result(req: dict):
-    from app.db.database import update_result_with_video_status, update_additional_video_url
+    from app.db.database import (update_result_with_video_status, update_additional_video_url,
+                                  upsert_video_result_node, get_result_by_slug)
+    import json as _json
     if "slug" in req and "video_url" in req:
+        slug = req["slug"]
+        video_url = req["video_url"]
         is_main = req.get("is_main", True)
         if is_main:
-            update_result_with_video_status(req["slug"], req["video_url"])
+            update_result_with_video_status(slug, video_url)
+            # Создаём/обновляем video-узел в дереве result_nodes
+            try:
+                result = get_result_by_slug(slug)
+                s5 = result.get("step5_stats") or {} if result else {}
+                if isinstance(s5, str):
+                    try: s5 = _json.loads(s5)
+                    except: s5 = {}
+                upsert_video_result_node(
+                    slug=slug,
+                    video_url=video_url,
+                    video_stats=s5,
+                    video_format=s5.get("video_format", "16:9"),
+                    avatar_style=s5.get("avatar_style", "normal"),
+                    avatar_id=s5.get("avatar_id", ""),
+                    heygen_engine=s5.get("heygen_engine", "avatar_iv"),
+                )
+            except Exception as e:
+                print(f"update_video_result: upsert_video_result_node error: {e}")
         else:
             video_id = req.get("video_id")
             if video_id:
-                update_additional_video_url(req["slug"], video_id, req["video_url"])
+                update_additional_video_url(slug, video_id, video_url)
         return {"success": True}
     return {"success": False}
 
@@ -426,12 +449,17 @@ async def process_user_query(req: QueryRequest):
     # Логируем входящий запрос
     log_message("web_user", "web_interface", "in", req.question)
     
+    from app.db.database import reserve_slug
+    slug = reserve_slug(req.question, req.tab_type)
+    
     queue = asyncio.Queue()
+    active_streams[slug] = queue
     
     # Запускаем фоновую задачу, которая будет жить даже если клиент отвалится
     task = asyncio.create_task(
         process_query_logic(
             queue=queue,
+            slug=slug,
             question=req.question,
             model=req.model,
             style=req.style,
@@ -458,6 +486,18 @@ async def process_user_query(req: QueryRequest):
     background_tasks.add(task)
     task.add_done_callback(background_tasks.discard)
     
+    return {"success": True, "slug": slug, "url": f"/text/{slug}"}
+
+@app.get("/api/stream_query")
+async def stream_query(slug: str):
+    """
+    Отдает SSE-поток для начатого ранее запроса.
+    """
+    queue = active_streams.get(slug)
+    if not queue:
+        # Если потока нет, возможно он завершен или slug неверный
+        return EventSourceResponse(iter([]))
+        
     async def generator():
         try:
             while True:
@@ -480,6 +520,8 @@ async def process_user_query(req: QueryRequest):
         except Exception as e:
             logger.exception("Непредвиденная ошибка генератора")
             yield {"data": json.dumps({"step": "error", "message": f"Внутренняя ошибка: {str(e)}"}, ensure_ascii=False)}
+        finally:
+            active_streams.pop(slug, None)
 
     return EventSourceResponse(generator())
 
@@ -835,21 +877,33 @@ class RenamNodeRequest(BaseModel):
 @app.get("/api/tree/{slug}")
 async def get_tree(slug: str):
     """Возвращает все узлы дерева. При первом обращении мигрирует из SavedResult."""
+    result_data = get_result_by_slug(slug)
+    if not result_data:
+        raise NotFoundError("Результат не найден")
+
+    # Пока идёт генерация — не мигрируем, возвращаем pending
+    if result_data.get("answer", "").startswith("⏳"):
+        return {
+            "slug": slug,
+            "question": result_data["question"],
+            "tab_type": result_data.get("tab_type") or "text",
+            "timestamp": result_data["timestamp"],
+            "status": "pending",
+            "nodes": [],
+        }
+
     nodes = get_tree_nodes(slug)
     if not nodes:
         # Автоматическая миграция из старой структуры
-        result_data = get_result_by_slug(slug)
-        if not result_data:
-            raise NotFoundError("Результат не найден")
         migrate_saved_result_to_tree(slug, result_data)
         nodes = get_tree_nodes(slug)
 
-    result_data = get_result_by_slug(slug)
     return {
         "slug": slug,
-        "question": result_data["question"] if result_data else "",
-        "tab_type": result_data["tab_type"] if result_data else "text",
-        "timestamp": result_data["timestamp"] if result_data else "",
+        "question": result_data["question"],
+        "tab_type": result_data.get("tab_type") or "text",
+        "timestamp": result_data["timestamp"],
+        "status": "ready",
         "nodes": nodes,
     }
 

@@ -358,6 +358,16 @@
         </div>
     </div>
 
+    <!-- Persistent Early Result Link (виден от Шага 1 до Шага 5, не зависит от состояний) -->
+    <div id="early-link-container" class="hidden bg-brand-lightBg border-2 border-brand-inputBorder rounded-[20px] p-5 text-center shadow-soft">
+        <p class="text-sm text-gray-500 mb-2"><i class="fas fa-link text-brand-main mr-1"></i> Ссылка на результат (доступна сразу):</p>
+        <a id="early-link-anchor" href="#" target="_blank"
+           class="inline-flex items-center gap-2 text-brand-main font-bold hover:text-brand-orangeHover transition-colors bg-white px-5 py-2.5 rounded-xl border border-brand-inputBorder shadow-sm break-all">
+            <i class="fas fa-external-link-alt"></i>
+            <span id="early-link-text"></span>
+        </a>
+    </div>
+
     <!-- Error State -->
     <div id="error-state" class="bg-red-50 border-2 border-red-200 rounded-[24px] shadow-sm p-8 hidden relative overflow-hidden">
         <div class="flex items-start gap-5 relative z-10">
@@ -634,5 +644,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/app.js?v=4.0"></script>
+<script src="/static/js/app.js?v=4.6"></script>
 {% endblock %}

@@ -81,7 +81,9 @@
 {% block scripts %}
 <script src="/static/js/tree.js?v=4.0"></script>
 <script>
-document.addEventListener('DOMContentLoaded', async () => {
+document.addEventListener('DOMContentLoaded', () => loadResult());
+
+async function loadResult() {
     const parts = window.location.pathname.split('/');
     const slug = parts[parts.length - 1];
     if (!slug) { showError("Не указан идентификатор."); return; }
@@ -92,10 +94,26 @@ document.addEventListener('DOMContentLoaded', async () => {
             return r.json();
         });
 
-        // Заполняем мета-карточку
+        const tabLabels = { text:'Текст', audio:'Аудио', video:'Видео' };
+
+        // Генерация ещё идёт — показываем pending-экран и опрашиваем каждые 5 сек
+        if (data.status === 'pending') {
+            const loadingTitle = document.getElementById('loading-title');
+            const loadingDesc  = document.getElementById('loading-desc');
+            if (loadingTitle) loadingTitle.textContent = 'Генерация в процессе...';
+            if (loadingDesc) {
+                loadingDesc.innerHTML = `
+                    Вопрос: <strong>${data.question || ''}</strong><br>
+                    <span class="text-sm text-gray-400 mt-1 block">Страница обновится автоматически по завершении генерации</span>`;
+            }
+            document.getElementById('loading-state').classList.remove('hidden');
+            setTimeout(loadResult, 5000);
+            return;
+        }
+
+        // Результат готов — заполняем мета-карточку
         document.getElementById('res-date').textContent     = data.timestamp || '';
         document.getElementById('res-question').textContent = data.question  || '';
-        const tabLabels = { text:'Текст', audio:'Аудио', video:'Видео' };
         document.getElementById('res-tab-badge').textContent =
             tabLabels[data.tab_type] || data.tab_type || '';
 
@@ -113,6 +131,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         errState.classList.remove('hidden');
         if (errMsg) errMsg.textContent = e.message || 'Ошибка загрузки.';
     }
-});
+}
 </script>
 {% endblock %}

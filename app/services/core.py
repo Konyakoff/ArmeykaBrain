@@ -7,7 +7,7 @@ from app.services.claude_service import (
     generate_audio_script_claude, calculate_claude_cost
 )
 from app.services.elevenlabs_service import generate_audio, get_elevenlabs_voices
-from app.db.database import save_result
+from app.db.database import save_result, reserve_slug, finalize_result
 
 logger = logging.getLogger("core")
 
@@ -15,20 +15,104 @@ logger = logging.getLogger("core")
 def _is_claude(model: str) -> bool:
     return model.startswith("claude-")
 
-logger = logging.getLogger("core")
 
-async def process_query_logic(queue: asyncio.Queue, question: str, model: str, style: str, context_threshold: int, send_prompts: bool, max_length: int = 4000, tab_type: str = "text", audio_duration: int = 60, elevenlabs_model: str = "eleven_v3", audio_wpm: int = 150, elevenlabs_voice: str = "FGY2WhTYpPnroxEErjIq", audio_style: float = 0.25, use_speaker_boost: bool = True, audio_stability: float = 0.5, audio_similarity_boost: float = 0.75, heygen_avatar_id: str = "Abigail_standing_office_front", video_format: str = "16:9", heygen_engine: str = "avatar_iv", avatar_style: str = "auto", custom_prompts: dict = None):
+async def _run_with_heartbeat(coro, queue: asyncio.Queue, step_label: str, interval: int = 5):
+    """
+    Запускает coroutine, параллельно отправляя в очередь периодические сообщения
+    типа "{step_label} (12с)..." — это позволяет фронтенду видеть, что генерация идёт,
+    и принудительно флашит буферы Cloudflare/Nginx (т.к. это data:-события, а не пинги).
+    """
+    task = asyncio.create_task(coro)
+    start = time.time()
+    counter = 0
+    while not task.done():
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=interval)
+            break
+        except asyncio.TimeoutError:
+            counter += 1
+            elapsed = int(time.time() - start)
+            await queue.put({
+                "step": "heartbeat",
+                "message": f"{step_label} (прошло {elapsed}с)...",
+            })
+    return await task
+
+
+async def _poll_heygen_video_background(
+    video_id: str, slug: str,
+    avatar_id: str = "", avatar_style: str = "normal",
+    video_format: str = "16:9", heygen_engine: str = "avatar_iv",
+    video_stats: dict = None
+):
+    """
+    Фоновый полинг статуса HeyGen видео (до 30 минут).
+    Когда видео готово — записывает URL в saved_results и создаёт video-узел в дереве.
+    Не требует открытого браузера.
+    """
+    from app.services.heygen_service import check_video_status
+    from app.db.database import update_result_with_video_status, upsert_video_result_node
+
+    logger.info(f"[heygen_bg] Запущен фоновый полинг video_id={video_id} slug={slug}")
+    stats = video_stats or {}
+
+    for attempt in range(180):          # 180 × 10 сек = 30 минут
+        await asyncio.sleep(10)
+        try:
+            status_info = await check_video_status(video_id)
+            if status_info["status"] == "completed" and status_info.get("video_url"):
+                video_url = status_info["video_url"]
+                gen_time = (attempt + 1) * 10
+                stats.update({"status": "completed", "generation_time_sec": gen_time})
+                update_result_with_video_status(slug, video_url)
+                upsert_video_result_node(
+                    slug=slug,
+                    video_url=video_url,
+                    video_stats=stats,
+                    video_format=video_format,
+                    avatar_style=avatar_style,
+                    avatar_id=avatar_id,
+                    heygen_engine=heygen_engine,
+                )
+                logger.info(f"[heygen_bg] video_id={video_id} slug={slug} готово за {gen_time}s")
+                return
+            elif status_info["status"] == "failed":
+                error = status_info.get("error") or "неизвестная ошибка"
+                logger.error(f"[heygen_bg] video_id={video_id} slug={slug} ошибка: {error}")
+                return
+            if attempt % 6 == 5:
+                logger.info(f"[heygen_bg] video_id={video_id} slug={slug} статус={status_info['status']}, попытка {attempt+1}/180")
+        except Exception as e:
+            logger.error(f"[heygen_bg] video_id={video_id} slug={slug} исключение: {e}")
+
+    logger.error(f"[heygen_bg] video_id={video_id} slug={slug} превышено время ожидания 30 мин")
+
+async def process_query_logic(queue: asyncio.Queue, slug: str, question: str, model: str, style: str, context_threshold: int, send_prompts: bool, max_length: int = 4000, tab_type: str = "text", audio_duration: int = 60, elevenlabs_model: str = "eleven_v3", audio_wpm: int = 150, elevenlabs_voice: str = "FGY2WhTYpPnroxEErjIq", audio_style: float = 0.25, use_speaker_boost: bool = True, audio_stability: float = 0.5, audio_similarity_boost: float = 0.75, heygen_avatar_id: str = "Abigail_standing_office_front", video_format: str = "16:9", heygen_engine: str = "avatar_iv", avatar_style: str = "auto", custom_prompts: dict = None):
     """
     Основная логика обработки запроса к ИИ.
     Выполняется в фоне и пишет промежуточные шаги в queue.
     """
     try:
-        await queue.put({"step": 1, "message": "Шаг 1: Ищем подходящие статьи и анализируем запрос..."})
+        # Padding в первом событии нужен для пробивки Cloudflare/прокси-буферов (~8KB).
+        # Иначе мелкое первое событие (~200 байт) удерживается до накопления буфера.
+        await queue.put({
+            "step": 1,
+            "message": "Шаг 1: Ищем подходящие статьи и анализируем запрос...",
+            "slug": slug,
+            "url": f"/text/{slug}",
+            "_pad": "x" * 8192,
+        })
         start_time_1 = time.time()
         if _is_claude(model):
-            step1 = await get_top_ids_claude(question, model)
+            step1 = await _run_with_heartbeat(
+                get_top_ids_claude(question, model), queue,
+                "Шаг 1: Анализирую запрос (Claude)"
+            )
         else:
-            step1 = await get_top_ids(question, model)
+            step1 = await _run_with_heartbeat(
+                get_top_ids(question, model), queue,
+                "Шаг 1: Анализирую запрос (Gemini)"
+            )
         gen_time_1 = int(time.time() - start_time_1)
         
         if not step1.articles:
@@ -71,15 +155,21 @@ async def process_query_logic(queue: asyncio.Queue, question: str, model: str, s
         start_time_2 = time.time()
         _cp = custom_prompts or {}
         if _is_claude(model):
-            step2 = await get_expert_analysis_claude(question, combined_context, style=style,
-                                                     max_length=max_length,
-                                                     override_style=_cp.get("step2_style"),
-                                                     model_name=model)
+            step2 = await _run_with_heartbeat(
+                get_expert_analysis_claude(question, combined_context, style=style,
+                                           max_length=max_length,
+                                           override_style=_cp.get("step2_style"),
+                                           model_name=model),
+                queue, "Шаг 2: Формирую экспертное заключение (Claude)"
+            )
             in_cost_2, out_cost_2 = calculate_claude_cost(step2.in_tokens, step2.out_tokens, model)
         else:
-            step2 = await get_expert_analysis(question, combined_context, style=style,
-                                              max_length=max_length,
-                                              override_style=_cp.get("step2_style"))
+            step2 = await _run_with_heartbeat(
+                get_expert_analysis(question, combined_context, style=style,
+                                    max_length=max_length,
+                                    override_style=_cp.get("step2_style")),
+                queue, "Шаг 2: Формирую экспертное заключение (Gemini)"
+            )
             in_cost_2, out_cost_2 = calculate_cost(step2.in_tokens, step2.out_tokens, "gemini-3.1-pro-preview")
         gen_time_2 = int(time.time() - start_time_2)
         
@@ -107,11 +197,17 @@ async def process_query_logic(queue: asyncio.Queue, question: str, model: str, s
             await queue.put({"step": 3, "message": f"Шаг 3: Генерируем короткий аудиосценарий на {audio_duration} секунд..."})
             start_time_3 = time.time()
             if _is_claude(model):
-                step3 = await generate_audio_script_claude(step2.answer, audio_duration, audio_wpm,
-                                                           override=_cp.get("step3"), model_name=model)
+                step3 = await _run_with_heartbeat(
+                    generate_audio_script_claude(step2.answer, audio_duration, audio_wpm,
+                                                 override=_cp.get("step3"), model_name=model),
+                    queue, "Шаг 3: Пишу аудиосценарий (Claude)"
+                )
             else:
-                step3 = await generate_audio_script(step2.answer, audio_duration, audio_wpm,
-                                                    override=_cp.get("step3"))
+                step3 = await _run_with_heartbeat(
+                    generate_audio_script(step2.answer, audio_duration, audio_wpm,
+                                          override=_cp.get("step3")),
+                    queue, "Шаг 3: Пишу аудиосценарий (Gemini)"
+                )
             gen_time_3 = int(time.time() - start_time_3)
             
             if _is_claude(model):
@@ -145,7 +241,12 @@ async def process_query_logic(queue: asyncio.Queue, question: str, model: str, s
             
             try:
                 start_time_4 = time.time()
-                step4_audio_url_web, step4_audio_url_orig = await generate_audio(step3_audio_result, elevenlabs_model, voice_id=elevenlabs_voice, speed=speed, stability=stability, similarity_boost=similarity_boost, style=audio_style, use_speaker_boost=use_speaker_boost)
+                step4_audio_url_web, step4_audio_url_orig = await _run_with_heartbeat(
+                    generate_audio(step3_audio_result, elevenlabs_model, voice_id=elevenlabs_voice,
+                                   speed=speed, stability=stability, similarity_boost=similarity_boost,
+                                   style=audio_style, use_speaker_boost=use_speaker_boost),
+                    queue, "Шаг 4: Синтезирую голос в ElevenLabs"
+                )
                 gen_time_4 = int(time.time() - start_time_4)
                 
                 char_count = len(step3_audio_result)
@@ -214,8 +315,9 @@ async def process_query_logic(queue: asyncio.Queue, question: str, model: str, s
         
         import json
         await queue.put({"step": 6 if (tab_type == "video") else 5, "message": "Сохраняем результаты в базу..."})
-        slug = save_result(
-            question, 
+        # slug уже зарезервирован в начале — обновляем запись финальными данными
+        finalize_result(
+            slug,
             step1_text, 
             final_answer, 
             tab_type, 
@@ -226,11 +328,20 @@ async def process_query_logic(queue: asyncio.Queue, question: str, model: str, s
             step2_stats=json.dumps(step2_stats, ensure_ascii=False) if step2_stats else None,
             step3_stats=json.dumps(step3_stats, ensure_ascii=False) if step3_stats else None,
             step4_stats=json.dumps(step4_stats, ensure_ascii=False) if step4_stats else None,
-            step5_video_url=None, # Еще не готово
+            step5_video_url=None,
             step5_video_id=step5_video_id,
             step5_stats=json.dumps(step5_stats, ensure_ascii=False) if step5_stats else None,
             total_stats=json.dumps(total_stats_dict, ensure_ascii=False)
         )
+
+        # Запускаем фоновый серверный полинг HeyGen — браузер можно закрыть
+        if step5_video_id and slug:
+            asyncio.create_task(_poll_heygen_video_background(
+                video_id=step5_video_id, slug=slug,
+                avatar_id=heygen_avatar_id, avatar_style=avatar_style,
+                video_format=video_format, heygen_engine=heygen_engine,
+                video_stats=dict(step5_stats) if step5_stats else {},
+            ))
         
         response_data = {
             "success": True,
@@ -394,6 +505,13 @@ async def process_upgrade_to_audio_logic(queue: asyncio.Queue, slug: str, raw_an
         if generate_video and step5_video_id:
             from app.db.database import update_result_with_video
             update_result_with_video(slug, step5_video_id, json.dumps(step5_stats, ensure_ascii=False), json.dumps(total_stats_dict, ensure_ascii=False))
+            # Фоновый серверный полинг — браузер можно закрыть
+            asyncio.create_task(_poll_heygen_video_background(
+                video_id=step5_video_id, slug=slug,
+                avatar_id=heygen_avatar_id, avatar_style=avatar_style,
+                video_format=video_format, heygen_engine=heygen_engine,
+                video_stats=dict(step5_stats) if step5_stats else {},
+            ))
         
         response_data = {
             "success": True,
