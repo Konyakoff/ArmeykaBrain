@@ -542,7 +542,10 @@ async function upgradeToAudio() {
     try {
         const response = await fetch('/api/upgrade_to_audio', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+                'Content-Type': 'application/json',
+                'Accept': 'text/event-stream'
+            },
             body: JSON.stringify({
                 slug: window.currentSlug,
                 audio_duration: parseInt(duration),

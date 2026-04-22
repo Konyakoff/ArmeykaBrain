@@ -8,6 +8,7 @@
 let _tree = null;              // экземпляр ResultTree
 let _treeAvatars    = [];      // список аватаров (загружается из /api/config)
 let _treeVoices     = [];      // список голосов ElevenLabs
+let _treeModels     = [];      // список AI-моделей (загружается из /api/config)
 let _treeStep3Prompts = {};    // словарь step3-промптов {name: text} (из /api/prompts)
 
 /* ─── Константы ────────────────────────────────────────────────────────── */
@@ -948,13 +949,32 @@ function _buildModalForm(type) {
 
     if (type === 'script') {
         const wpmVal = _ls('audioWpm','150');
-        const savedPromptKey = _ls('step3PromptKey', 'default');
+        const savedPromptKey = _ls('step3PromptKey', 'yur_bud_svoboden');
+        const savedAiModel   = _ls('treeScriptModel', 'gemini-flash-latest');
 
         // Динамически строим список промптов из загруженных с сервера
         const promptKeys = Object.keys(_treeStep3Prompts);
         const promptOptions = promptKeys.length > 0
             ? promptKeys.map(k => `<option value="${k}"${k === savedPromptKey ? ' selected' : ''}>${k}</option>`).join('')
             : `<option value="default" selected>default</option>`;
+
+        // Строим сгруппированный список AI-моделей
+        const geminiModels = _treeModels.filter(m => m.provider === 'gemini' || !m.provider);
+        const claudeModels = _treeModels.filter(m => m.provider === 'claude');
+        let modelOptionsHtml = '';
+        if (geminiModels.length > 0) {
+            modelOptionsHtml += `<optgroup label="Gemini (Google)">` +
+                geminiModels.map(m => `<option value="${m.id}" ${m.id === savedAiModel ? 'selected' : ''}>${m.name}</option>`).join('') +
+                `</optgroup>`;
+        }
+        if (claudeModels.length > 0) {
+            modelOptionsHtml += `<optgroup label="Claude (Anthropic)">` +
+                claudeModels.map(m => `<option value="${m.id}" ${m.id === savedAiModel ? 'selected' : ''}>${m.name}</option>`).join('') +
+                `</optgroup>`;
+        }
+        if (!modelOptionsHtml) {
+            modelOptionsHtml = `<option value="gemini-flash-latest" selected>gemini-flash-latest</option>`;
+        }
 
         form.innerHTML = `
         <div class="gm-row">
@@ -963,7 +983,11 @@ function _buildModalForm(type) {
         </div>
         ${_wpmSliderHtml(wpmVal)}
         <div class="gm-row">
-            <label class="gm-label">Промпт сценария (Gemini)</label>
+            <label class="gm-label">Модель ИИ</label>
+            <select id="gm-ai-model" class="gm-select">${modelOptionsHtml}</select>
+        </div>
+        <div class="gm-row">
+            <label class="gm-label">Промпт для сценария</label>
             <select id="gm-step3-prompt" class="gm-select">${promptOptions}</select>
         </div>`;
 
@@ -1016,17 +1040,18 @@ function _buildModalForm(type) {
         const savedAvatar = _ls('heygenAvatar', '');
         const savedFormat = _ls('videoFormat', '9:16');
         const savedEngine = _ls('heygenEngine', 'avatar_iv');
-        const savedStyle  = _ls('avatarStyle',  'auto');
-
-        const avatarBtn = `<button type="button" id="gm-avatar-btn"
-            onclick="openAvatarModal('gm-video-format','gm-avatar-id','gm-avatar-btn')"
-            class="gm-avatar-btn">
-            <i class="fas fa-user-circle"></i> ${savedAvatar || 'Выбрать аватар...'}
-        </button>
-        <input type="hidden" id="gm-avatar-id" value="${savedAvatar}">`;
+        const savedStyle  = _ls('avatarStyle',  'normal');
 
         form.innerHTML = `
-        <div class="gm-row">${avatarBtn}</div>
+        <div class="gm-row">
+            <label class="gm-label">Аватар</label>
+            <button type="button" id="gm-avatar-btn"
+                onclick="openAvatarModal('gm-video-format','gm-avatar-id','gm-avatar-btn')"
+                class="gm-avatar-btn">
+                <i class="fas fa-user-circle"></i> Выбрать аватар...
+            </button>
+            <input type="hidden" id="gm-avatar-id" value="${savedAvatar}">
+        </div>
         <div class="gm-row gm-row--2">
             <div>
                 <label class="gm-label">Движок</label>
@@ -1048,13 +1073,35 @@ function _buildModalForm(type) {
         <div class="gm-row">
             <label class="gm-label">Стиль кадрирования</label>
             <select id="gm-style-av" class="gm-select">
-                <option value="auto"    ${savedStyle==='auto'?'selected':''}>Авто (по формату)</option>
                 <option value="normal"  ${savedStyle==='normal'?'selected':''}>Нормальный</option>
+                <option value="auto"    ${savedStyle==='auto'?'selected':''}>Авто (по формату)</option>
                 <option value="closeUp" ${savedStyle==='closeUp'?'selected':''}>Крупный план</option>
                 <option value="circle"  ${savedStyle==='circle'?'selected':''}>Круг</option>
             </select>
             <p id="gm-style-av-hint" class="gm-hint hidden">Для 9:16 рекомендуется «Крупный план»</p>
         </div>`;
+
+        // После вставки HTML — обновляем кнопку аватара: показываем имя и ставим дефолт (Лиза пиджак)
+        setTimeout(() => {
+            const inp = document.getElementById('gm-avatar-id');
+            if (!inp) return;
+
+            // Если нет сохранённого аватара — ищем Лизу (пиджак, горизонтальный) среди приватных
+            if (!inp.value) {
+                const allPrivate = (typeof windowPrivateAvatars !== 'undefined') ? windowPrivateAvatars : [];
+                const lisa = allPrivate.find(a =>
+                    (a.avatar_name || '').toLowerCase().includes('лиза') &&
+                    (a.avatar_name || '').toLowerCase().includes('пиджак')
+                );
+                if (lisa) {
+                    inp.value = lisa.avatar_id;
+                } else if (allPrivate.length > 0) {
+                    inp.value = allPrivate[0].avatar_id;
+                }
+            }
+
+            updateAvatarButtonText('gm-avatar-id', 'gm-avatar-btn', 'gm-video-format');
+        }, 0);
     }
 
     return form;
@@ -1083,7 +1130,7 @@ function _collectModalParams(type) {
             audio_duration_sec: parseInt(g('gm-duration')?.value || 60),
             audio_wpm: parseInt(g('gm-wpm')?.value || 150),
             step3_prompt_key: g('gm-step3-prompt')?.value || 'default',
-            gemini_model: 'gemini-3.1-pro-preview',
+            ai_model: g('gm-ai-model')?.value || 'gemini-flash-latest',
         };
     } else if (type === 'audio') {
         const voiceSel = g('gm-voice');
@@ -1126,6 +1173,7 @@ function _saveModalParams(type, params) {
         if (params.audio_duration_sec) localStorage.setItem('audioDuration',   params.audio_duration_sec);
         if (params.audio_wpm)          localStorage.setItem('audioWpm',         params.audio_wpm);
         if (params.step3_prompt_key)   localStorage.setItem('step3PromptKey',   params.step3_prompt_key);
+        if (params.ai_model)           localStorage.setItem('treeScriptModel',  params.ai_model);
     }
     if (type === 'video') {
         if (params.avatar_id)     localStorage.setItem('heygenAvatar', params.avatar_id);
@@ -1144,7 +1192,10 @@ ResultTree.prototype.generateNode = async function(parentNodeId, targetType, par
 
     const resp = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+            'Content-Type': 'application/json',
+            'Accept': 'text/event-stream'
+        },
         body: JSON.stringify({ target_type: targetType, params }),
     });
 
@@ -1295,6 +1346,7 @@ async function initResultTree(slug) {
         const cfg = await fetch('/api/config').then(r => r.json());
         _treeVoices  = cfg.voices  || [];
         _treeAvatars = cfg.avatars || [];
+        _treeModels  = cfg.models  || [];
         if (typeof windowAvatars !== 'undefined')        windowAvatars        = _treeAvatars;
         if (typeof windowPrivateAvatars !== 'undefined') windowPrivateAvatars = cfg.private_avatars || [];
     } catch (e) { console.warn('Не удалось загрузить config:', e); }

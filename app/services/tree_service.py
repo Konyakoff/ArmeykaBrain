@@ -15,6 +15,11 @@ from app.db.database import (
     count_siblings, update_tree_node_stats
 )
 from app.services.gemini_service import generate_audio_script, calculate_cost, get_model_info
+from app.services.claude_service import generate_audio_script_claude, calculate_claude_cost
+
+
+def _is_claude(model: str) -> bool:
+    return (model or "").startswith("claude-")
 from app.services.elevenlabs_service import generate_audio as elevenlabs_generate
 from app.services.heygen_service import generate_video_from_audio, check_video_status, calculate_heygen_cost
 from app.services.deepgram_service import generate_timecodes as deepgram_generate_timecodes
@@ -86,7 +91,7 @@ async def generate_script_node(queue: asyncio.Queue, slug: str,
     try:
         duration = params.get("audio_duration_sec", 60)
         wpm = params.get("audio_wpm", 150)
-        model = params.get("gemini_model", "gemini-3.1-pro-preview")
+        model = params.get("ai_model") or params.get("gemini_model", "gemini-flash-latest")
 
         # Резолвим step3-промпт по ключу (если указан)
         prompt_key = params.get("step3_prompt_key", "default")
@@ -96,16 +101,24 @@ async def generate_script_node(queue: asyncio.Queue, slug: str,
             audio_prompts = PromptManager.get_audio_prompts()
             prompt_override = audio_prompts.get(prompt_key)
 
-        await queue.put({"step": 3, "message": "Генерация аудиосценария через Gemini..."})
+        provider = "Claude" if _is_claude(model) else "Gemini"
+        await queue.put({"step": 3, "message": f"Генерация аудиосценария через {provider} ({model})..."})
         t0 = time.time()
-        result = await generate_audio_script(article_text, duration=duration, wpm=wpm,
-                                             override=prompt_override)
+        if _is_claude(model):
+            result = await generate_audio_script_claude(article_text, duration=duration, wpm=wpm,
+                                                        override=prompt_override, model_name=model)
+        else:
+            result = await generate_audio_script(article_text, duration=duration, wpm=wpm,
+                                                 override=prompt_override)
         gen_time = round(time.time() - t0, 1)
 
         if not result or not result.script:
-            raise Exception("Пустой сценарий от Gemini")
+            raise Exception(f"Пустой сценарий от {provider}")
 
-        in_cost, out_cost = calculate_cost(result.in_tokens, result.out_tokens, model)
+        if _is_claude(model):
+            in_cost, out_cost = calculate_claude_cost(result.in_tokens, result.out_tokens, model)
+        else:
+            in_cost, out_cost = calculate_cost(result.in_tokens, result.out_tokens, model)
         stats = {
             "model": model,
             "in_tokens": result.in_tokens,
