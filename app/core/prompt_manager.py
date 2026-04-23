@@ -123,6 +123,8 @@ class PromptManager:
             if not style_key:
                 raise ValueError("style_key обязателен для target=step2_style")
             key = style_key
+        elif target == "step3" and style_key:
+            key = style_key
 
         data = cls._load_json(filename)
         data[key] = content

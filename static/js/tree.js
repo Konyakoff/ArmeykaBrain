@@ -77,7 +77,17 @@ class ResultTree {
         this.container.innerHTML = '';
         const roots = [...this.nodesMap.values()].filter(n => !n.parent_node_id);
         roots.sort((a, b) => a.position - b.position);
-        roots.forEach(n => this.container.appendChild(this._buildNode(n)));
+        roots.forEach(n => {
+            // Перед корневым article-узлом вставляем карточку «Результаты шага 1»
+            if (n.node_type === 'article') {
+                const s1card = _buildStep1Card(n);
+                if (s1card) this.container.appendChild(s1card);
+            }
+            this.container.appendChild(this._buildNode(n));
+        });
+        // Суммарная стоимость в конце дерева
+        const totalBar = _buildTotalBar(this.nodesMap);
+        if (totalBar) this.container.appendChild(totalBar);
     }
 
     _buildNode(nodeData) {
@@ -498,20 +508,15 @@ function _contentArticle(node) {
         }
     }
 
-    // Stats
+    // Stats — показываем только Шаг 2 (Шаг 1 вынесен в отдельную карточку выше)
     const stats = node.stats_json;
     if (stats) {
-        const s1 = stats.step1 || {};
         const s2 = stats.step2 || {};
-        const total = (s1.total_cost || 0) + (s2.total_cost || 0);
-        const t1 = s1.generation_time_sec || 0;
-        const t2 = s2.generation_time_sec || 0;
         wrap.appendChild(_statsRow([
-            s1.model ? `Модель: ${s1.model}` : null,
-            s1.in_tokens ? `Шаг 1: ${s1.in_tokens}/${s1.out_tokens} токенов` : null,
-            s2.in_tokens ? `Шаг 2: ${s2.in_tokens}/${s2.out_tokens} токенов` : null,
-            (t1 || t2) ? `Время: ${t1}с + ${t2}с` : null,
-            total ? `$${total.toFixed(4)}` : null,
+            s2.model   ? `Модель: ${s2.model}` : null,
+            s2.in_tokens ? `${s2.in_tokens}/${s2.out_tokens} токенов` : null,
+            s2.generation_time_sec ? `${s2.generation_time_sec}с` : null,
+            s2.total_cost ? `$${Number(s2.total_cost).toFixed(4)}` : null,
         ]));
     }
     return wrap;
@@ -790,6 +795,237 @@ function _contentVideo(node) {
 }
 
 /* ── Строка статистики ─────────────────────────────────────────────────── */
+/* ── Карточка «Результаты поиска — Шаг 1» ────────────────────────────────
+   Парсит текст из params_json.step1_info (markdown-строка) и отрисовывает
+   аккуратный блок над узлом «Экспертная статья».                          */
+function _buildStep1Card(articleNode) {
+    const p  = articleNode.params_json || {};
+    const st = (articleNode.stats_json || {}).step1 || {};
+    const raw = p.step1_info || '';
+    if (!raw) return null;
+
+    // ── Парсим markdown-строку в структурированные данные ──────────────────
+    // Формат:
+    //   🗂 **Классификация вопроса:** <category>
+    //   ✅ **Найденные статьи (ТОП-15):**
+    //   Статья/Пункт <num> - <file> - <pct>%
+    //   🔍 **Взяты в работу (id объектов >= N% или Топ-3):**
+    //   • <uid>
+    const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+
+    let category  = '';
+    let threshold = null;          // число-порог из текста «>= N%»
+    const allArticles = [];        // { num, file, pct }
+    const usedUids    = [];        // строки uid
+    let section = '';
+
+    for (const line of lines) {
+        if (line.includes('Классификация вопроса:')) {
+            category = line.replace(/.*Классификация вопроса:\*\*?\s*/, '').trim();
+        } else if (line.includes('Найденные статьи')) {
+            section = 'articles';
+        } else if (line.includes('Взяты в работу')) {
+            // Извлекаем порог: «>= 70%»
+            const tm = line.match(/>=\s*(\d+)%/);
+            if (tm) threshold = parseInt(tm[1]);
+            section = 'used';
+        } else if (section === 'articles' && /^Статья/.test(line)) {
+            // "Статья/Пункт 18 - 3.PP_565_RaspBolezney - 95%"
+            const m = line.match(/Статья\/Пункт\s+(\d+)\s+-\s+(.+?)\s+-\s+(\d+)%/);
+            if (m) allArticles.push({ num: m[1], file: m[2], pct: parseInt(m[3]) });
+        } else if (section === 'used' && line.startsWith('•')) {
+            usedUids.push(line.replace(/^•\s*/, '').trim());
+        }
+    }
+
+    // ── Строим Set «file:num» для точного сопоставления ────────────────────
+    // uid-формат: <file>_<x>_<y>_<article_num>
+    // Сопоставляем каждый uid с конкретной статьёй по комбинации файл + номер,
+    // чтобы избежать ложных совпадений при одинаковых номерах в разных файлах.
+    const usedComposites = new Set();
+    for (const uid of usedUids) {
+        for (const a of allArticles) {
+            if (uid.startsWith(a.file + '_') && uid.endsWith('_' + a.num)) {
+                usedComposites.add(`${a.file}:${a.num}`);
+            }
+        }
+    }
+
+    // ── Строим DOM ─────────────────────────────────────────────────────────
+    const card = document.createElement('div');
+    card.className = 'tn-step1-card';
+
+    // Заголовок
+    const hdr = document.createElement('div');
+    hdr.className = 'tn-step1-card__header';
+
+    // Готовим ссылку для скачивания JSON (если есть raw_data)
+    const rawData = p.step1_raw_data || null;
+    let downloadHtml = '';
+    if (rawData) {
+        downloadHtml = `<button class="tn-step1-card__dl-btn" title="Скачать оригинальный JSON ответа модели (Шаг 1)">
+            <i class="fas fa-file-code"></i>
+        </button>`;
+    }
+
+    hdr.innerHTML = `
+        <div class="tn-step1-card__icon-wrap">
+            <i class="fas fa-search"></i>
+        </div>
+        <div class="tn-step1-card__hdr-text">
+            <span class="tn-step1-card__title">Результаты поиска — Шаг 1</span>
+            ${category ? `<span class="tn-step1-card__category">${_escHtml(category)}</span>` : ''}
+            ${threshold !== null ? `<span class="tn-step1-card__threshold" title="Порог отбора НПА для Шага 2">порог ≥${threshold}%</span>` : ''}
+        </div>
+        <div class="tn-step1-card__hdr-right">
+            ${downloadHtml}
+            <button class="tn-step1-card__toggle" title="Свернуть/развернуть">
+                <i class="fas fa-chevron-up"></i>
+            </button>
+        </div>`;
+
+    card.appendChild(hdr);
+
+    // Навешиваем скачивание после вставки в DOM
+    if (rawData) {
+        hdr.querySelector('.tn-step1-card__dl-btn').addEventListener('click', e => {
+            e.stopPropagation();
+            const slug = articleNode.slug || 'step1';
+            const filename = `step1_${slug}.json`;
+            const blob = new Blob([JSON.stringify(rawData, null, 2)], { type: 'application/json' });
+            const url  = URL.createObjectURL(blob);
+            const a    = document.createElement('a');
+            a.href = url; a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+        });
+    }
+
+    // Тело
+    const body = document.createElement('div');
+    body.className = 'tn-step1-card__body';
+
+    // Таблица статей
+    if (allArticles.length) {
+        const grid = document.createElement('div');
+        grid.className = 'tn-step1-card__grid';
+
+        allArticles.forEach(a => {
+            const isUsed = usedComposites.has(`${a.file}:${a.num}`);
+            const row = document.createElement('div');
+            row.className = 'tn-step1-card__row' + (isUsed ? ' tn-step1-card__row--used' : '');
+
+            const pctBar = Math.round(a.pct);
+            row.innerHTML = `
+                <span class="tn-step1-card__num">${_escHtml(a.num)}</span>
+                <span class="tn-step1-card__file">${_escHtml(a.file)}</span>
+                <span class="tn-step1-card__pct-wrap">
+                    <span class="tn-step1-card__pct-bar" style="width:${pctBar}%"></span>
+                    <span class="tn-step1-card__pct-label">${a.pct}%</span>
+                </span>
+                ${isUsed
+                    ? '<span class="tn-step1-card__used-badge">в работе</span>'
+                    : '<span class="tn-step1-card__skip-badge">пропущена</span>'}`;
+            grid.appendChild(row);
+        });
+        body.appendChild(grid);
+    }
+
+    // Строка статистики
+    if (Object.keys(st).length) {
+        const statsEl = document.createElement('div');
+        statsEl.className = 'tn-step1-card__stats';
+        const model = (st.model || '').replace('gemini-', 'g-').replace('-preview', '');
+        const tok   = st.in_tokens ? `${st.in_tokens} / ${st.out_tokens} токенов` : null;
+        const time  = st.generation_time_sec ? `${st.generation_time_sec}с` : null;
+        const cost  = st.total_cost ? `$${Number(st.total_cost).toFixed(4)}` : null;
+        [model, tok, time, cost].filter(Boolean).forEach(txt => {
+            const tag = document.createElement('span');
+            tag.className = 'tn__tag';
+            tag.textContent = txt;
+            statsEl.appendChild(tag);
+        });
+        body.appendChild(statsEl);
+    }
+
+    card.appendChild(body);
+
+    // Сворачивание
+    let collapsed = false;
+    hdr.querySelector('.tn-step1-card__toggle').addEventListener('click', e => {
+        e.stopPropagation();
+        collapsed = !collapsed;
+        body.style.display = collapsed ? 'none' : '';
+        hdr.querySelector('i').className = collapsed ? 'fas fa-chevron-down' : 'fas fa-chevron-up';
+    });
+
+    return card;
+}
+
+function _escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+/* ── Суммарная стоимость по всему дереву ────────────────────────────────── */
+function _buildTotalBar(nodesMap) {
+    let total = 0;
+    const breakdown = [];  // { label, cost }
+
+    nodesMap.forEach(node => {
+        const st = node.stats_json || {};
+        switch (node.node_type) {
+            case 'article': {
+                const c1 = st.step1?.total_cost || 0;
+                const c2 = st.step2?.total_cost || 0;
+                if (c1) breakdown.push({ label: 'Шаг 1 (поиск)', cost: c1 });
+                if (c2) breakdown.push({ label: 'Шаг 2 (статья)', cost: c2 });
+                total += c1 + c2;
+                break;
+            }
+            case 'script': {
+                const c = st.total_cost || 0;
+                if (c) breakdown.push({ label: node.title || 'Сценарий', cost: c });
+                total += c;
+                break;
+            }
+            case 'audio': {
+                const c  = st.total_cost || 0;
+                const ct = st.timecodes_cost || 0;
+                if (c)  breakdown.push({ label: node.title || 'Аудио', cost: c });
+                if (ct) breakdown.push({ label: 'Таймкоды', cost: ct });
+                total += c + ct;
+                break;
+            }
+            case 'video': {
+                const c = st.estimated_cost || st.total_cost || 0;
+                if (c) breakdown.push({ label: node.title || 'Видео', cost: c });
+                total += c;
+                break;
+            }
+        }
+    });
+
+    if (!total) return null;
+
+    const bar = document.createElement('div');
+    bar.className = 'tn-total-bar';
+
+    const parts = breakdown.map(b =>
+        `<span class="tn-total-bar__item">${_escHtml(b.label)}: <strong>$${b.cost.toFixed(4)}</strong></span>`
+    ).join('');
+
+    bar.innerHTML = `
+        <div class="tn-total-bar__left">
+            <i class="fas fa-receipt tn-total-bar__icon"></i>
+            <span class="tn-total-bar__label">Итого по запросу</span>
+            <div class="tn-total-bar__breakdown">${parts}</div>
+        </div>
+        <div class="tn-total-bar__total">$${total.toFixed(4)}</div>`;
+
+    return bar;
+}
+
 function _statsRow(parts) {
     const el = document.createElement('div');
     el.className = 'tn__stats-row';
@@ -852,8 +1088,8 @@ function _buildTags(node, nodesMap) {
     const parts = [];
     switch (node.node_type) {
         case 'article': {
-            if (st.step1) {
-                const model = (st.step1.model || '').replace('gemini-', '').replace('-preview', '');
+            if (st.step2) {
+                const model = (st.step2.model || '').replace('gemini-', '').replace('-preview', '');
                 if (model) parts.push(model);
             }
             const charLen = node.content_text?.length;
@@ -908,8 +1144,13 @@ function _buildTags(node, nodesMap) {
 function _buildMeta(node) {
     const st = node.stats_json || {};
     const parts = [];
-    if (st.generation_time_sec) parts.push(`${st.generation_time_sec}с`);
-    else if (st.step1 && st.step1.generation_time_sec) {
+    if (st.generation_time_sec) {
+        parts.push(`${st.generation_time_sec}с`);
+    } else if (node.node_type === 'article') {
+        // Article node: show only Step 2 time (Step 1 has its own card)
+        const t2 = st.step2?.generation_time_sec || 0;
+        if (t2) parts.push(`${t2}с`);
+    } else if (st.step1 && st.step1.generation_time_sec) {
         const t = (st.step1.generation_time_sec || 0) + (st.step2?.generation_time_sec || 0);
         if (t) parts.push(`${t}с`);
     }
@@ -921,6 +1162,11 @@ function _buildMeta(node) {
 function _totalCost(node) {
     const st = node.stats_json || {};
     if (st.total_cost != null) return Number(st.total_cost).toFixed(4);
+    // Article node: show only Step 2 cost (Step 1 is shown in its own card)
+    if (node.node_type === 'article') {
+        const c = st.step2?.total_cost || 0;
+        return c ? c.toFixed(4) : null;
+    }
     if (st.step1 || st.step2) {
         const c = (st.step1?.total_cost || 0) + (st.step2?.total_cost || 0);
         return c ? c.toFixed(4) : null;

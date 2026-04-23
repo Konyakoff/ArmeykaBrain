@@ -1209,6 +1209,7 @@ function peInitUI() {
                 const sk = peGetSessionKey();
                 delete promptEditor.session[sk];
                 peSave();
+                _promptsCache = null; // сбрасываем кэш для просмотра
                 peSetStatusMsg('Перезаписано на диск ✓');
             } else {
                 peSetStatusMsg(data.error || 'Ошибка сохранения', true);
@@ -1252,6 +1253,7 @@ function peInitUI() {
                 promptEditor.activeStyleKey = result.name;
                 peUpdateTabStyle();
                 peRenderEditor();
+                _promptsCache = null; // сбрасываем кэш для просмотра
                 peSetStatusMsg(`Промпт «${result.name}» создан ✓`);
             } else {
                 peSetStatusMsg(data.error || 'Ошибка создания', true);
@@ -1431,3 +1433,44 @@ function _pollTimecodes(slug) {
         } catch (e) { /* тихо */ }
     }, 8000);
 }
+
+// ──── Просмотр промптов ───────────────────────────────────────
+
+let _promptsCache = null;
+
+async function openPromptPreview(group, key) {
+    if (!key) return;
+    const modal = document.getElementById('prompt-preview-modal');
+    const titleEl = document.getElementById('prompt-preview-title');
+    const textEl = document.getElementById('prompt-preview-text');
+    if (!modal) return;
+
+    titleEl.textContent = key;
+    textEl.textContent = '⏳ Загрузка...';
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+
+    try {
+        if (!_promptsCache) {
+            const res = await fetch('/api/prompts');
+            const data = await res.json();
+            _promptsCache = data.prompts || {};
+        }
+        const text = (_promptsCache[group] || {})[key];
+        textEl.textContent = text != null ? text : '(промпт не найден)';
+    } catch (e) {
+        textEl.textContent = 'Ошибка загрузки промпта.';
+    }
+}
+
+function closePromptPreview() {
+    const modal = document.getElementById('prompt-preview-modal');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }
+}
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closePromptPreview();
+});

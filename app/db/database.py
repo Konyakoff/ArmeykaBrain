@@ -586,6 +586,11 @@ def migrate_saved_result_to_tree(slug: str, result_data: dict) -> list:
         s2 = result_data["step2_stats"] if isinstance(result_data["step2_stats"], dict) else {}
         article_stats["step2"] = s2
 
+    # raw_data — оригинальный JSON ответа нейросети на Шаг 1 (для скачивания)
+    _s1_raw = None
+    if isinstance(article_stats.get("step1"), dict):
+        _s1_raw = article_stats["step1"].get("raw_data") or None
+
     article_node = ResultNode(
         slug=slug,
         node_type="article",
@@ -595,6 +600,7 @@ def migrate_saved_result_to_tree(slug: str, result_data: dict) -> list:
         content_text=result_data.get("answer", ""),
         params_json=json.dumps({
             "step1_info": result_data.get("step1_info") or "",
+            "step1_raw_data": _s1_raw,
         }, ensure_ascii=False),
         stats_json=json.dumps(article_stats, ensure_ascii=False),
         created_at=now,

@@ -34,65 +34,126 @@
         Настройки
     </h2>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
-        
-        <!-- Models per step -->
+
+        <!-- ─── Блок Текст ─────────────────────────────────────────────── -->
+        <!-- Section divider: Шаг 1 -->
+        <div class="md:col-span-2 form-section-divider">
+            <span class="form-section-divider__label">Подбор статей НПА (Шаг 1)</span>
+            <span class="form-section-divider__line"></span>
+        </div>
+
+        <!-- ИИ-модель (подбор статей) -->
         <div class="flex flex-col">
             <label class="text-sm font-semibold text-gray-700 mb-2">ИИ-модель (подбор статей)</label>
             <select id="model-select-1" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
                 <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Загрузка...)</option>
             </select>
         </div>
+
+        <!-- Порог контекста -->
+        <div class="flex flex-col">
+            <label class="text-sm font-semibold text-gray-700 mb-2">Порог контекста (%)</label>
+            <input type="number" id="context-threshold" min="0" max="100" value="70" class="w-full rounded-xl p-4 text-brand-dark font-bold text-lg border-2">
+            <p class="text-xs text-gray-400 mt-2 leading-relaxed">Минимальный процент совпадения для взятия статьи в контекст.</p>
+        </div>
+
+        <!-- Section divider: Шаг 2 -->
+        <div class="md:col-span-2 form-section-divider">
+            <span class="form-section-divider__label">Экспертная статья (Шаг 2)</span>
+            <span class="form-section-divider__line"></span>
+        </div>
+
+        <!-- ИИ-модель (экспертная статья) -->
         <div class="flex flex-col">
             <label class="text-sm font-semibold text-gray-700 mb-2">ИИ-модель (экспертная статья)</label>
             <select id="model-select-2" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
                 <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Загрузка...)</option>
             </select>
         </div>
-        <div class="audio-only flex flex-col hidden transition-all duration-300">
-            <label class="text-sm font-semibold text-gray-700 mb-2">ИИ-модель (аудио-сценарий)</label>
-            <select id="model-select-3" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
-                <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Загрузка...)</option>
-            </select>
-        </div>
-        
-        <!-- Style -->
+
+        <!-- Экспертная статья (промпт) -->
         <div class="flex flex-col">
             <label class="text-sm font-semibold text-gray-700 mb-2">Экспертная статья (промпт)</label>
-            <select id="style-select" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
-                <option value="telegram_yur">telegram_yur (Загрузка...)</option>
-            </select>
+            <div class="relative flex items-center gap-2">
+                <select id="style-select" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
+                    <option value="telegram_yur">telegram_yur (Загрузка...)</option>
+                </select>
+                <button type="button" title="Просмотреть текст промпта" onclick="openPromptPreview('step2_style', document.getElementById('style-select').value)"
+                    class="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-xl border-2 border-gray-200 bg-white text-gray-400 hover:text-brand-main hover:border-brand-main/40 transition-colors">
+                    <i class="fas fa-eye text-sm"></i>
+                </button>
+            </div>
         </div>
 
-        <!-- Context Threshold -->
-        <div class="flex flex-col">
-            <label class="text-sm font-semibold text-gray-700 mb-2">Порог контекста (%)</label>
-            <input type="number" id="context-threshold" min="0" max="100" value="70" class="w-full rounded-xl p-4 text-brand-dark font-bold text-lg border-2">
-            <p class="text-xs text-gray-400 mt-2 leading-relaxed">Минимальный процент совпадения для взятия статьи в контекст.</p>
-        </div>
-        
-        <!-- Max Length -->
+        <!-- Длина ответа -->
         <div class="flex flex-col">
             <label class="text-sm font-semibold text-gray-700 mb-2">Длина ответа (символов)</label>
             <input type="number" id="max-length" min="1000" max="10000" step="500" value="4000" class="w-full rounded-xl p-4 text-brand-dark font-bold text-lg border-2">
             <p class="text-xs text-gray-400 mt-2 leading-relaxed">Максимальное количество символов в ответе ИИ.</p>
         </div>
 
-        <!-- Audio Duration (Hidden by default) -->
+        <!-- ─── Блок Аудио ─────────────────────────────────────────────── -->
+        <!-- Section divider: Шаг 3 -->
+        <div class="audio-only md:col-span-2 form-section-divider hidden">
+            <span class="form-section-divider__label">Аудио-сценарий (Шаг 3)</span>
+            <span class="form-section-divider__line"></span>
+        </div>
+
+        <!-- Длительность аудио -->
         <div class="audio-only flex flex-col hidden transition-all duration-300">
             <label class="text-sm font-semibold text-gray-700 mb-2">Длительность аудио (сек)</label>
             <input type="number" id="audio-duration" min="14" max="300" value="30" class="w-full rounded-xl p-4 text-brand-dark font-bold text-lg border-2">
             <p class="text-xs text-gray-400 mt-2 leading-relaxed">Время от 14 до 300 секунд (для аудио).</p>
         </div>
 
-        <!-- Audio Scenario Prompt (audio/video only) -->
+        <!-- ИИ-модель (аудио-сценарий) -->
         <div class="audio-only flex flex-col hidden transition-all duration-300">
-            <label class="text-sm font-semibold text-gray-700 mb-2">Аудио-сценарий (промпт)</label>
-            <select id="step3-prompt-select" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
-                <option value="yur_bud_svoboden">yur_bud_svoboden (Загрузка...)</option>
+            <label class="text-sm font-semibold text-gray-700 mb-2">ИИ-модель (аудио-сценарий)</label>
+            <select id="model-select-3" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
+                <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Загрузка...)</option>
             </select>
         </div>
 
-        <!-- Audio WPM (Hidden by default) -->
+        <!-- Аудио-сценарий (промпт) -->
+        <div class="audio-only flex flex-col hidden transition-all duration-300">
+            <label class="text-sm font-semibold text-gray-700 mb-2">Аудио-сценарий (промпт)</label>
+            <div class="relative flex items-center gap-2">
+                <select id="step3-prompt-select" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
+                    <option value="yur_bud_svoboden">yur_bud_svoboden (Загрузка...)</option>
+                </select>
+                <button type="button" title="Просмотреть текст промпта" onclick="openPromptPreview('step3', document.getElementById('step3-prompt-select').value)"
+                    class="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-xl border-2 border-gray-200 bg-white text-gray-400 hover:text-brand-main hover:border-brand-main/40 transition-colors">
+                    <i class="fas fa-eye text-sm"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Section divider: Шаг 4 -->
+        <div class="audio-only md:col-span-2 form-section-divider hidden">
+            <span class="form-section-divider__label">Генерация аудио (Шаг 4)</span>
+            <span class="form-section-divider__line"></span>
+        </div>
+
+        <!-- Голос диктора -->
+        <div class="audio-only flex flex-col hidden transition-all duration-300">
+            <label class="text-sm font-semibold text-gray-700 mb-2">Голос диктора</label>
+            <select id="elevenlabs-voice" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
+                <option value="pFZP5JQG7iQjIQuC4Bku">Lily (Загрузка...)</option>
+            </select>
+        </div>
+
+        <!-- Модель озвучки -->
+        <div class="audio-only flex flex-col hidden transition-all duration-300">
+            <label class="text-sm font-semibold text-gray-700 mb-2">Модель озвучки (ElevenLabs)</label>
+            <select id="elevenlabs-model" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
+                <option value="eleven_multilingual_v2">Eleven Multilingual v2</option>
+                <option value="eleven_v3" selected>Eleven v3</option>
+                <option value="eleven_turbo_v2_5">Eleven Turbo v2.5</option>
+                <option value="eleven_flash_v2_5">Eleven Flash v2.5</option>
+            </select>
+        </div>
+
+        <!-- Скорость (WPM) -->
         <div class="audio-only flex flex-col hidden transition-all duration-300">
             <div class="flex justify-between items-center mb-2">
                 <label class="text-sm font-semibold text-gray-700">Скорость (слов в минуту)</label>
@@ -112,29 +173,82 @@
             <p class="text-xs text-gray-400 mt-3 leading-relaxed">Влияет на длину текста и темп диктора.</p>
         </div>
 
-        <!-- ElevenLabs Voice (Hidden by default) -->
+        <!-- Стиль (Style) -->
         <div class="audio-only flex flex-col hidden transition-all duration-300">
-            <label class="text-sm font-semibold text-gray-700 mb-2">Голос диктора</label>
-            <select id="elevenlabs-voice" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
-                <option value="pFZP5JQG7iQjIQuC4Bku">Lily (Загрузка...)</option>
-            </select>
+            <label class="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1 relative w-fit">
+                Стиль (Style)
+                <span class="group/tooltip relative cursor-help inline-flex items-center ml-1">
+                    <i class="fas fa-question-circle text-gray-400 transition-colors group-hover/tooltip:text-brand-main"></i>
+                    <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-gray-800 text-white text-[10px] leading-tight rounded-lg opacity-0 invisible transition-all z-50 pointer-events-none text-center shadow-lg group-hover/tooltip:opacity-100 group-hover/tooltip:visible font-normal">
+                        Усиливает экспрессию (0.0 - 1.0). Выше 0.0 делает голос эмоциональнее, но может снизить стабильность.
+                    </div>
+                </span>
+            </label>
+            <input type="number" id="audio-style" min="0" max="1" step="0.05" value="0.25" class="w-full rounded-xl p-4 text-brand-dark font-bold text-lg border-2">
         </div>
+
+        <!-- Stability -->
+        <div class="audio-only flex flex-col hidden transition-all duration-300">
+            <label class="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1 relative w-fit">
+                Stability (0.0 - 1.0)
+                <span class="group/tooltip relative cursor-help inline-flex items-center ml-1">
+                    <i class="fas fa-question-circle text-gray-400 transition-colors group-hover/tooltip:text-brand-main"></i>
+                    <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-gray-800 text-white text-[10px] leading-tight rounded-lg opacity-0 invisible transition-all z-50 pointer-events-none text-center shadow-lg group-hover/tooltip:opacity-100 group-hover/tooltip:visible font-normal">
+                        Более высокое значение делает голос более стабильным и предсказуемым, но менее эмоциональным. Низкие значения дают больше эмоций, но могут звучать нестабильно.
+                    </div>
+                </span>
+            </label>
+            <input type="number" id="audio-stability" min="0" max="1" step="0.1" value="0.5" class="w-full rounded-xl p-4 text-brand-dark font-bold text-lg border-2">
+        </div>
+
+        <!-- Similarity Boost -->
+        <div class="audio-only flex flex-col hidden transition-all duration-300">
+            <label class="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1 relative w-fit">
+                Similarity Boost (0.0 - 1.0)
+                <span class="group/tooltip relative cursor-help inline-flex items-center ml-1">
+                    <i class="fas fa-question-circle text-gray-400 transition-colors group-hover/tooltip:text-brand-main"></i>
+                    <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-gray-800 text-white text-[10px] leading-tight rounded-lg opacity-0 invisible transition-all z-50 pointer-events-none text-center shadow-lg group-hover/tooltip:opacity-100 group-hover/tooltip:visible font-normal">
+                        Высокое значение заставляет голос максимально походить на оригинальный семпл. При слишком высоких значениях может появиться металлический оттенок.
+                    </div>
+                </span>
+            </label>
+            <input type="number" id="audio-similarity" min="0" max="1" step="0.05" value="0.75" class="w-full rounded-xl p-4 text-brand-dark font-bold text-lg border-2">
+        </div>
+
+        <!-- Speaker Boost -->
+        <div class="audio-only flex flex-col hidden transition-all duration-300">
+            <label class="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1 relative w-fit">
+                Speaker Boost
+                <span class="group/tooltip relative cursor-help inline-flex items-center ml-1">
+                    <i class="fas fa-question-circle text-gray-400 transition-colors group-hover/tooltip:text-brand-main"></i>
+                    <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-gray-800 text-white text-[10px] leading-tight rounded-lg opacity-0 invisible transition-all z-50 pointer-events-none text-center shadow-lg group-hover/tooltip:opacity-100 group-hover/tooltip:visible font-normal">
+                        Улучшает качество звучания голоса и сходство с оригиналом. Рекомендуется всегда оставлять включенным.
+                    </div>
+                </span>
+            </label>
+            <div class="flex items-center mt-2">
+                <input type="checkbox" id="use-speaker-boost" checked class="organic-checkbox w-6 h-6 text-brand-main bg-gray-100 border-gray-300 rounded focus:ring-brand-main">
+                <span class="ml-3 text-sm font-medium text-gray-700">Включить Boost</span>
+            </div>
+        </div>
+
+        <!-- ─── Блок Видео ─────────────────────────────────────────────── -->
+        <!-- Section divider: Шаг 5 -->
+        <div class="video-only md:col-span-2 form-section-divider hidden">
+            <span class="form-section-divider__label">Генерация ИИ-аватара (Шаг 5)</span>
+            <span class="form-section-divider__line"></span>
+        </div>
+
+        <!-- Аватар (HeyGen) -->
         <div class="video-only flex flex-col hidden transition-all duration-300">
             <label class="text-sm font-semibold text-gray-700 mb-2">Аватар (HeyGen)</label>
-            <!-- Кнопка выбора аватара -->
             <button type="button" id="heygen-avatar-btn" onclick="openAvatarModal('video-format', 'heygen-avatar', 'heygen-avatar-btn')" class="w-full rounded-xl p-4 text-brand-dark font-medium border-2 flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors bg-white text-left">
                 <i class="fas fa-user-circle text-gray-400"></i> Выбрать аватар...
             </button>
-            <!-- Скрытый инпут для хранения выбранного ID аватара -->
             <input type="hidden" id="heygen-avatar" value="ef720fad85884cc3b9d3352828f1f7e7">
         </div>
-        <div class="video-only flex flex-col hidden transition-all duration-300">
-            <label class="text-sm font-semibold text-gray-700 mb-2">Версия движка (HeyGen)</label>
-            <select id="heygen-engine" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
-                <option value="avatar_iv">Avatar IV (Digital Twins & Studio Avatars)</option>
-                <option value="avatar_iii">Avatar III (Standard Talking Heads)</option>
-            </select>
-        </div>
+
+        <!-- Формат видео -->
         <div class="video-only flex flex-col hidden transition-all duration-300">
             <label class="text-sm font-semibold text-gray-700 mb-2">Формат видео</label>
             <select id="video-format" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
@@ -143,6 +257,17 @@
                 <option value="1:1">Квадратный (1:1) - Instagram</option>
             </select>
         </div>
+
+        <!-- Версия движка (HeyGen) -->
+        <div class="video-only flex flex-col hidden transition-all duration-300">
+            <label class="text-sm font-semibold text-gray-700 mb-2">Версия движка (HeyGen)</label>
+            <select id="heygen-engine" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
+                <option value="avatar_iv">Avatar IV (Digital Twins & Studio Avatars)</option>
+                <option value="avatar_iii">Avatar III (Standard Talking Heads)</option>
+            </select>
+        </div>
+
+        <!-- Стиль кадрирования -->
         <div class="video-only flex flex-col hidden transition-all duration-300">
             <label class="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1">
                 Стиль кадрирования
@@ -160,70 +285,6 @@
                 <option value="circle">Круг</option>
             </select>
             <p id="avatar-style-hint" class="text-xs text-indigo-600 mt-1 hidden"><i class="fas fa-info-circle"></i> Для вертикального видео рекомендуется «Крупный план»</p>
-        </div>
-        <div class="audio-only flex flex-col hidden transition-all duration-300">
-            <label class="text-sm font-semibold text-gray-700 mb-2">Модель озвучки (ElevenLabs)</label>
-            <select id="elevenlabs-model" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
-                <option value="eleven_multilingual_v2">Eleven Multilingual v2</option>
-                <option value="eleven_v3" selected>Eleven v3</option>
-                <option value="eleven_turbo_v2_5">Eleven Turbo v2.5</option>
-                <option value="eleven_flash_v2_5">Eleven Flash v2.5</option>
-            </select>
-        </div>
-
-        <div class="audio-only flex flex-col hidden transition-all duration-300">
-            <label class="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1 relative w-fit">
-                            Стиль (Style)
-                            <span class="group/tooltip relative cursor-help inline-flex items-center ml-1">
-                                <i class="fas fa-question-circle text-gray-400 transition-colors group-hover/tooltip:text-brand-main"></i>
-                                <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-gray-800 text-white text-[10px] leading-tight rounded-lg opacity-0 invisible transition-all z-50 pointer-events-none text-center shadow-lg group-hover/tooltip:opacity-100 group-hover/tooltip:visible font-normal">
-                                    Усиливает экспрессию (0.0 - 1.0). Выше 0.0 делает голос эмоциональнее, но может снизить стабильность.
-                                </div>
-                            </span>
-                        </label>
-            <input type="number" id="audio-style" min="0" max="1" step="0.05" value="0.25" class="w-full rounded-xl p-4 text-brand-dark font-bold text-lg border-2">
-        </div>
-        
-        <div class="audio-only flex flex-col hidden transition-all duration-300">
-            <label class="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1 relative w-fit">
-                            Stability (0.0 - 1.0)
-                            <span class="group/tooltip relative cursor-help inline-flex items-center ml-1">
-                                <i class="fas fa-question-circle text-gray-400 transition-colors group-hover/tooltip:text-brand-main"></i>
-                                <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-gray-800 text-white text-[10px] leading-tight rounded-lg opacity-0 invisible transition-all z-50 pointer-events-none text-center shadow-lg group-hover/tooltip:opacity-100 group-hover/tooltip:visible font-normal">
-                                    Более высокое значение делает голос более стабильным и предсказуемым, но менее эмоциональным. Низкие значения дают больше эмоций, но могут звучать нестабильно.
-                                </div>
-                            </span>
-                        </label>
-            <input type="number" id="audio-stability" min="0" max="1" step="0.1" value="0.5" class="w-full rounded-xl p-4 text-brand-dark font-bold text-lg border-2">
-        </div>
-
-        <div class="audio-only flex flex-col hidden transition-all duration-300">
-            <label class="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1 relative w-fit">
-                            Similarity Boost (0.0 - 1.0)
-                            <span class="group/tooltip relative cursor-help inline-flex items-center ml-1">
-                                <i class="fas fa-question-circle text-gray-400 transition-colors group-hover/tooltip:text-brand-main"></i>
-                                <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-gray-800 text-white text-[10px] leading-tight rounded-lg opacity-0 invisible transition-all z-50 pointer-events-none text-center shadow-lg group-hover/tooltip:opacity-100 group-hover/tooltip:visible font-normal">
-                                    Высокое значение заставляет голос максимально походить на оригинальный семпл. При слишком высоких значениях может появиться металлический оттенок.
-                                </div>
-                            </span>
-                        </label>
-            <input type="number" id="audio-similarity" min="0" max="1" step="0.05" value="0.75" class="w-full rounded-xl p-4 text-brand-dark font-bold text-lg border-2">
-        </div>
-
-        <div class="audio-only flex flex-col hidden transition-all duration-300">
-            <label class="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1 relative w-fit">
-                            Speaker Boost
-                            <span class="group/tooltip relative cursor-help inline-flex items-center ml-1">
-                                <i class="fas fa-question-circle text-gray-400 transition-colors group-hover/tooltip:text-brand-main"></i>
-                                <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-gray-800 text-white text-[10px] leading-tight rounded-lg opacity-0 invisible transition-all z-50 pointer-events-none text-center shadow-lg group-hover/tooltip:opacity-100 group-hover/tooltip:visible font-normal">
-                                    Улучшает качество звучания голоса и сходство с оригиналом. Рекомендуется всегда оставлять включенным.
-                                </div>
-                            </span>
-                        </label>
-            <div class="flex items-center mt-2">
-                <input type="checkbox" id="use-speaker-boost" checked class="organic-checkbox w-6 h-6 text-brand-main bg-gray-100 border-gray-300 rounded focus:ring-brand-main">
-                <span class="ml-3 text-sm font-medium text-gray-700">Включить Boost</span>
-            </div>
         </div>
 
         <!-- Checkbox -->
@@ -306,8 +367,23 @@
 </div>
 
 <!-- Модалка: ввод пароля администратора -->
-<div id="pe-password-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/40 backdrop-blur-sm">
-    <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm mx-4 relative">
+<!-- Модальное окно просмотра промпта -->
+<div id="prompt-preview-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/40 backdrop-blur-sm" onclick="if(event.target===this)closePromptPreview()">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col" style="max-height:80vh">
+        <div class="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-100 flex-shrink-0">
+            <h3 class="text-base font-bold text-brand-dark heading-font flex items-center gap-2">
+                <i class="fas fa-eye text-brand-main text-sm"></i>
+                <span id="prompt-preview-title">Промпт</span>
+            </h3>
+            <button onclick="closePromptPreview()" class="text-gray-400 hover:text-gray-600 transition-colors text-lg leading-none"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="overflow-y-auto flex-1 p-6">
+            <pre id="prompt-preview-text" class="text-sm text-gray-700 whitespace-pre-wrap font-mono leading-relaxed bg-gray-50 rounded-xl p-4 border border-gray-200"></pre>
+        </div>
+    </div>
+</div>
+
+<div id="pe-password-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/40 backdrop-blur-sm">    <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm mx-4 relative">
         <button id="pe-pwd-close" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-xl"><i class="fas fa-times"></i></button>
         <h3 id="pe-pwd-title" class="text-lg font-bold text-brand-dark mb-2 heading-font">Подтверждение</h3>
         <p id="pe-pwd-desc" class="text-sm text-gray-500 mb-4"></p>
@@ -675,5 +751,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/app.js?v=5.0"></script>
+<script src="/static/js/app.js?v=5.1"></script>
 {% endblock %}
