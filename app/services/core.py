@@ -100,12 +100,17 @@ async def _deepgram_background_for_slug(slug: str, audio_url_orig: str, dg_func,
     except Exception as e:
         logger.error(f"[deepgram_bg] slug={slug} ошибка: {e}")
 
-async def process_query_logic(queue: asyncio.Queue, slug: str, question: str, model: str, style: str, context_threshold: int, send_prompts: bool, max_length: int = 4000, tab_type: str = "text", audio_duration: int = 60, elevenlabs_model: str = "eleven_v3", audio_wpm: int = 150, elevenlabs_voice: str = "FGY2WhTYpPnroxEErjIq", audio_style: float = 0.25, use_speaker_boost: bool = True, audio_stability: float = 0.5, audio_similarity_boost: float = 0.75, heygen_avatar_id: str = "Abigail_standing_office_front", video_format: str = "16:9", heygen_engine: str = "avatar_iv", avatar_style: str = "auto", custom_prompts: dict = None, audio_prompt_name: str = None):
+async def process_query_logic(queue: asyncio.Queue, slug: str, question: str, model: str, style: str, context_threshold: int, send_prompts: bool, max_length: int = 4000, tab_type: str = "text", audio_duration: int = 60, elevenlabs_model: str = "eleven_v3", audio_wpm: int = 150, elevenlabs_voice: str = "FGY2WhTYpPnroxEErjIq", audio_style: float = 0.25, use_speaker_boost: bool = True, audio_stability: float = 0.5, audio_similarity_boost: float = 0.75, heygen_avatar_id: str = "Abigail_standing_office_front", video_format: str = "16:9", heygen_engine: str = "avatar_iv", avatar_style: str = "auto", custom_prompts: dict = None, audio_prompt_name: str = None, model1: str = None, model2: str = None, model3: str = None):
     """
     Основная логика обработки запроса к ИИ.
     Выполняется в фоне и пишет промежуточные шаги в queue.
     """
     try:
+        # Per-step models: fallback to shared `model` if not specified
+        step1_model = model1 or model
+        step2_model = model2 or model
+        step3_model = model3 or model
+
         # Padding в первом событии нужен для пробивки Cloudflare/прокси-буферов (~8KB).
         # Иначе мелкое первое событие (~200 байт) удерживается до накопления буфера.
         await queue.put({
@@ -116,14 +121,14 @@ async def process_query_logic(queue: asyncio.Queue, slug: str, question: str, mo
             "_pad": "x" * 8192,
         })
         start_time_1 = time.time()
-        if _is_claude(model):
+        if _is_claude(step1_model):
             step1 = await _run_with_heartbeat(
-                get_top_ids_claude(question, model), queue,
+                get_top_ids_claude(question, step1_model), queue,
                 "Шаг 1: Анализирую запрос (Claude)"
             )
         else:
             step1 = await _run_with_heartbeat(
-                get_top_ids(question, model), queue,
+                get_top_ids(question, step1_model), queue,
                 "Шаг 1: Анализирую запрос (Gemini)"
             )
         gen_time_1 = int(time.time() - start_time_1)
@@ -138,10 +143,10 @@ async def process_query_logic(queue: asyncio.Queue, slug: str, question: str, mo
             return
             
         combined_context, used_ids = prepare_expert_context(step1.articles, threshold=context_threshold)
-        if _is_claude(model):
-            in_cost_1, out_cost_1 = calculate_claude_cost(step1.in_tokens, step1.out_tokens, model)
+        if _is_claude(step1_model):
+            in_cost_1, out_cost_1 = calculate_claude_cost(step1.in_tokens, step1.out_tokens, step1_model)
         else:
-            in_cost_1, out_cost_1 = calculate_cost(step1.in_tokens, step1.out_tokens, model)
+            in_cost_1, out_cost_1 = calculate_cost(step1.in_tokens, step1.out_tokens, step1_model)
         
         step1_data = {
             "query_category": step1.query_category,
@@ -154,7 +159,7 @@ async def process_query_logic(queue: asyncio.Queue, slug: str, question: str, mo
         step1_text += f"🔍 **Взяты в работу (id объектов >= {context_threshold}% или Топ-3):**\n" + ("\n".join([f"• {uid}" for uid in used_ids]) if used_ids else "Нет данных") + "\n\n"
         
         step1_stats = {
-            "model": model,
+            "model": step1_model,
             "in_tokens": step1.in_tokens,
             "out_tokens": step1.out_tokens,
             "in_cost": in_cost_1,
@@ -167,15 +172,15 @@ async def process_query_logic(queue: asyncio.Queue, slug: str, question: str, mo
         await queue.put({"step": 2, "message": "Шаг 2: Формируем экспертное заключение..."})
         start_time_2 = time.time()
         _cp = custom_prompts or {}
-        if _is_claude(model):
+        if _is_claude(step2_model):
             step2 = await _run_with_heartbeat(
                 get_expert_analysis_claude(question, combined_context, style=style,
                                            max_length=max_length,
                                            override_style=_cp.get("step2_style"),
-                                           model_name=model),
+                                           model_name=step2_model),
                 queue, "Шаг 2: Формирую экспертное заключение (Claude)"
             )
-            in_cost_2, out_cost_2 = calculate_claude_cost(step2.in_tokens, step2.out_tokens, model)
+            in_cost_2, out_cost_2 = calculate_claude_cost(step2.in_tokens, step2.out_tokens, step2_model)
         else:
             step2 = await _run_with_heartbeat(
                 get_expert_analysis(question, combined_context, style=style,
@@ -183,13 +188,13 @@ async def process_query_logic(queue: asyncio.Queue, slug: str, question: str, mo
                                     override_style=_cp.get("step2_style")),
                 queue, "Шаг 2: Формирую экспертное заключение (Gemini)"
             )
-            in_cost_2, out_cost_2 = calculate_cost(step2.in_tokens, step2.out_tokens, "gemini-3.1-pro-preview")
+            in_cost_2, out_cost_2 = calculate_cost(step2.in_tokens, step2.out_tokens, step2_model)
         gen_time_2 = int(time.time() - start_time_2)
         
         total_cost = in_cost_1 + out_cost_1 + in_cost_2 + out_cost_2
         
         step2_stats = {
-            "model": model,
+            "model": step2_model,
             "in_tokens": step2.in_tokens,
             "out_tokens": step2.out_tokens,
             "in_cost": in_cost_2,
@@ -209,10 +214,10 @@ async def process_query_logic(queue: asyncio.Queue, slug: str, question: str, mo
         if tab_type in ["audio", "video"]:
             await queue.put({"step": 3, "message": f"Шаг 3: Генерируем короткий аудиосценарий на {audio_duration} секунд..."})
             start_time_3 = time.time()
-            if _is_claude(model):
+            if _is_claude(step3_model):
                 step3 = await _run_with_heartbeat(
                     generate_audio_script_claude(step2.answer, audio_duration, audio_wpm,
-                                                 override=_cp.get("step3"), model_name=model),
+                                                 override=_cp.get("step3"), model_name=step3_model),
                     queue, "Шаг 3: Пишу аудиосценарий (Claude)"
                 )
             else:
@@ -223,14 +228,14 @@ async def process_query_logic(queue: asyncio.Queue, slug: str, question: str, mo
                 )
             gen_time_3 = int(time.time() - start_time_3)
             
-            if _is_claude(model):
-                in_cost_3, out_cost_3 = calculate_claude_cost(step3.in_tokens, step3.out_tokens, model)
+            if _is_claude(step3_model):
+                in_cost_3, out_cost_3 = calculate_claude_cost(step3.in_tokens, step3.out_tokens, step3_model)
             else:
-                in_cost_3, out_cost_3 = calculate_cost(step3.in_tokens, step3.out_tokens, "gemini-3.1-pro-preview")
+                in_cost_3, out_cost_3 = calculate_cost(step3.in_tokens, step3.out_tokens, step3_model)
             total_cost += in_cost_3 + out_cost_3
             
             step3_stats = {
-                "model": model,
+                "model": step3_model,
                 "in_tokens": step3.in_tokens,
                 "out_tokens": step3.out_tokens,
                 "in_cost": in_cost_3,
