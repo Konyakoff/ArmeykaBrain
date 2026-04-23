@@ -99,6 +99,7 @@ function switchTab(tab, initial = false) {
 document.addEventListener('DOMContentLoaded', async () => {
     loadConfig();
     loadHistory();
+    _initStep3PromptSelect();
     
     const savedContextThreshold = localStorage.getItem('contextThreshold');
     if (savedContextThreshold) document.getElementById('context-threshold').value = savedContextThreshold;
@@ -384,7 +385,7 @@ async function sendQuery() {
     const audioStability = document.getElementById('audio-stability') ? parseFloat(document.getElementById('audio-stability').value) : 0.5;
     const audioSimilarity = document.getElementById('audio-similarity') ? parseFloat(document.getElementById('audio-similarity').value) : 0.75;
     const useSpeakerBoost = document.getElementById('use-speaker-boost') ? document.getElementById('use-speaker-boost').checked : true;
-    const heygenAvatarId = document.getElementById('heygen-avatar') ? document.getElementById('heygen-avatar').value : 'Abigail_standing_office_front';
+    const heygenAvatarId = document.getElementById('heygen-avatar') ? document.getElementById('heygen-avatar').value : 'ef720fad85884cc3b9d3352828f1f7e7';
     const videoFormat = document.getElementById('video-format') ? document.getElementById('video-format').value : '16:9';
     const heygenEngine = document.getElementById('heygen-engine') ? document.getElementById('heygen-engine').value : 'avatar_iv';
     const avatarStyleEl = document.getElementById('avatar-style');
@@ -1077,6 +1078,23 @@ async function peInitEditor() {
         promptEditor.step3Key = ('yur_bud_svoboden' in step3) ? 'yur_bud_svoboden' : (Object.keys(step3)[0] || 'default');
     }
 
+    // Заполняем внешний дропдаун "Аудио-сценарий (промпт)" в настройках
+    const step3Select = document.getElementById('step3-prompt-select');
+    if (step3Select && Object.keys(step3).length) {
+        step3Select.innerHTML = Object.keys(step3).map(k =>
+            `<option value="${k}" ${k === promptEditor.step3Key ? 'selected' : ''}>${k}</option>`
+        ).join('');
+        step3Select.addEventListener('change', (e) => {
+            promptEditor.step3Key = e.target.value;
+            localStorage.setItem('pe_step3_key', e.target.value);
+            // Синхронизируем PE-редактор если открыт
+            if (promptEditor.activeKey === 'step3') {
+                promptEditor.activeStyleKey = e.target.value;
+                peRenderEditor();
+            }
+        });
+    }
+
     peRenderEditor();
     peUpdateTabStyle();
 }
@@ -1321,6 +1339,44 @@ function peGetCustomPrompts() {
 document.addEventListener('DOMContentLoaded', () => {
     peInitUI();
 });
+
+// ──── Аудио-сценарий (промпт) — внешний дропдаун ─────────────
+
+async function _initStep3PromptSelect() {
+    const sel = document.getElementById('step3-prompt-select');
+    if (!sel) return;
+    try {
+        const res = await fetch('/api/prompts');
+        const data = await res.json();
+        const step3 = (data.prompts || {})['step3'] || {};
+        if (!Object.keys(step3).length) return;
+
+        const saved = localStorage.getItem('pe_step3_key') || 'yur_bud_svoboden';
+        const defaultKey = (saved in step3) ? saved : (('yur_bud_svoboden' in step3) ? 'yur_bud_svoboden' : Object.keys(step3)[0]);
+
+        sel.innerHTML = Object.keys(step3).map(k =>
+            `<option value="${k}" ${k === defaultKey ? 'selected' : ''}>${k}</option>`
+        ).join('');
+
+        // Sync promptEditor if it's loaded
+        if (typeof promptEditor !== 'undefined') {
+            promptEditor.step3Key = defaultKey;
+        }
+
+        sel.addEventListener('change', (e) => {
+            localStorage.setItem('pe_step3_key', e.target.value);
+            if (typeof promptEditor !== 'undefined') {
+                promptEditor.step3Key = e.target.value;
+                if (promptEditor.activeKey === 'step3') {
+                    promptEditor.activeStyleKey = e.target.value;
+                    if (typeof peRenderEditor === 'function') peRenderEditor();
+                }
+            }
+        });
+    } catch (e) {
+        console.error('_initStep3PromptSelect error', e);
+    }
+}
 
 // ──── Таймкоды Deepgram (главная страница) ────────────────────
 

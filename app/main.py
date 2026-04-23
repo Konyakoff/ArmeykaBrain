@@ -355,7 +355,7 @@ async def get_config():
         "default_model": "gemini-3.1-pro-preview",
         "default_style": "telegram_yur",
         "default_voice": "FGY2WhTYpPnroxEErjIq",
-        "default_avatar": "Abigail_standing_office_front"
+        "default_avatar": "ef720fad85884cc3b9d3352828f1f7e7"
     }
 
 def _check_admin_password(password: Optional[str]) -> bool:
