@@ -50,13 +50,20 @@ async def _call_claude(model_name: str, prompt: str, temperature: float = 0.3,
         "Always respond in the same language as the user's question. "
         + ("Respond ONLY with valid JSON, no markdown, no explanation." if json_mode else "")
     )
-    response = await client.messages.create(
+    # Claude 4+ (opus-4, sonnet-4, …) не поддерживает параметр temperature
+    _no_temp_models = ("claude-opus-4", "claude-sonnet-4", "claude-haiku-4")
+    use_temperature = not any(model_name.startswith(p) for p in _no_temp_models)
+
+    kwargs = dict(
         model=model_name,
         max_tokens=max_tokens,
-        temperature=temperature,
         system=system_msg,
         messages=[{"role": "user", "content": prompt}],
     )
+    if use_temperature:
+        kwargs["temperature"] = temperature
+
+    response = await client.messages.create(**kwargs)
     text = response.content[0].text
     in_tok  = response.usage.input_tokens
     out_tok = response.usage.output_tokens
