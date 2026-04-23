@@ -165,7 +165,8 @@ async def process_query_logic(queue: asyncio.Queue, slug: str, question: str, mo
             "in_cost": in_cost_1,
             "out_cost": out_cost_1,
             "total_cost": in_cost_1 + out_cost_1,
-            "generation_time_sec": gen_time_1
+            "generation_time_sec": gen_time_1,
+            "raw_data": step1_data,
         }
         await queue.put({"step": "partial", "data": {"step1_info": step1_data, "step1_stats": step1_stats}})
         
