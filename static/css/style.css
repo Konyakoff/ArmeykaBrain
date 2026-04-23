@@ -583,6 +583,21 @@ textarea::-webkit-scrollbar-thumb:hover { background: #F47920; }
 .tn__tc-btn:hover { background: #ecfeff; border-color: #06b6d4; }
 .tn__tc-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* Спиннер авто-генерации таймкодов */
+.tn__tc-spin {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #6366f1;
+    background: #eef2ff;
+    border: 1px dashed #a5b4fc;
+    padding: 4px 10px;
+    border-radius: 8px;
+    margin-top: 6px;
+    user-select: none;
+}
+
 /* Видео */
 .tn__video-wrap {
     width: 100%;

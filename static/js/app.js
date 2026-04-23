@@ -620,6 +620,12 @@ async function sendQuery() {
             step4AudioSource.src = data.step4_audio_url;
             document.getElementById('step4-audio-download').href = data.step4_audio_url_original || data.step4_audio_url;
             step4AudioPlayer.load();
+
+            // Показываем спиннер таймкодов — Deepgram генерируется фоном
+            const tcSpinner = document.getElementById('step4-tc-spinner');
+            if (tcSpinner) tcSpinner.classList.remove('hidden');
+            // Запускаем поллинг таймкодов по slug
+            if (data.slug) _pollTimecodes(data.slug);
             
             // Add video generation block
             const videoBlockId = 'video-upgrade-main';
@@ -1315,3 +1321,39 @@ function peGetCustomPrompts() {
 document.addEventListener('DOMContentLoaded', () => {
     peInitUI();
 });
+
+// ──── Таймкоды Deepgram (главная страница) ────────────────────
+
+let _tcPollTimer = null;
+
+function _applyTimecodes(stats) {
+    const jsonLink = document.getElementById('step4-tc-json');
+    const vttLink  = document.getElementById('step4-tc-vtt');
+    const spinner  = document.getElementById('step4-tc-spinner');
+    if (stats.timecodes_json_url && jsonLink && vttLink) {
+        jsonLink.href = stats.timecodes_json_url;
+        jsonLink.classList.remove('hidden');
+        vttLink.href  = stats.timecodes_vtt_url || '#';
+        vttLink.classList.remove('hidden');
+        if (spinner) spinner.classList.add('hidden');
+    }
+}
+
+function _pollTimecodes(slug) {
+    if (_tcPollTimer) clearInterval(_tcPollTimer);
+    let attempts = 0;
+    _tcPollTimer = setInterval(async () => {
+        attempts++;
+        if (attempts > 40) { clearInterval(_tcPollTimer); return; } // макс ~5 мин
+        try {
+            const r = await fetch(`/api/text/${slug}`);
+            if (!r.ok) return;
+            const d = await r.json();
+            const stats = d.step4_stats || {};
+            if (stats.timecodes_json_url) {
+                clearInterval(_tcPollTimer);
+                _applyTimecodes(stats);
+            }
+        } catch (e) { /* тихо */ }
+    }, 8000);
+}

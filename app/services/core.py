@@ -87,6 +87,19 @@ async def _poll_heygen_video_background(
 
     logger.error(f"[heygen_bg] video_id={video_id} slug={slug} превышено время ожидания 30 мин")
 
+
+async def _deepgram_background_for_slug(slug: str, audio_url_orig: str, dg_func, update_func):
+    """
+    Фоновая задача: запускает Deepgram для main-pipeline аудио,
+    сохраняет timecodes_json_url / timecodes_vtt_url в step4_stats saved_result.
+    """
+    try:
+        result = await dg_func(audio_url_orig)
+        update_func(slug, result["json_url"], result["vtt_url"], result["cost"])
+        logger.info(f"[deepgram_bg] slug={slug} таймкоды готовы: {result['json_url']}")
+    except Exception as e:
+        logger.error(f"[deepgram_bg] slug={slug} ошибка: {e}")
+
 async def process_query_logic(queue: asyncio.Queue, slug: str, question: str, model: str, style: str, context_threshold: int, send_prompts: bool, max_length: int = 4000, tab_type: str = "text", audio_duration: int = 60, elevenlabs_model: str = "eleven_v3", audio_wpm: int = 150, elevenlabs_voice: str = "FGY2WhTYpPnroxEErjIq", audio_style: float = 0.25, use_speaker_boost: bool = True, audio_stability: float = 0.5, audio_similarity_boost: float = 0.75, heygen_avatar_id: str = "Abigail_standing_office_front", video_format: str = "16:9", heygen_engine: str = "avatar_iv", avatar_style: str = "auto", custom_prompts: dict = None, audio_prompt_name: str = None):
     """
     Основная логика обработки запроса к ИИ.
@@ -278,6 +291,14 @@ async def process_query_logic(queue: asyncio.Queue, slug: str, question: str, mo
                     "generation_time_sec": gen_time_4
                 }
                 await queue.put({"step": "partial", "data": {"step4_audio_url": step4_audio_url_web, "step4_stats": step4_stats}})
+
+                # Запускаем Deepgram таймкоды фоном сразу после генерации аудио
+                if step4_audio_url_orig:
+                    from app.services.deepgram_service import generate_timecodes as _dg_timecodes
+                    from app.db.database import update_result_with_timecodes as _update_timecodes
+                    asyncio.create_task(_deepgram_background_for_slug(
+                        slug, step4_audio_url_orig, _dg_timecodes, _update_timecodes
+                    ))
             except Exception as e:
                 logger.error(f"Ошибка генерации аудио: {e}")
                 step4_stats = {"error": str(e)}
@@ -460,6 +481,14 @@ async def process_upgrade_to_audio_logic(queue: asyncio.Queue, slug: str, raw_an
                 "generation_time_sec": gen_time_4
             }
             await queue.put({"step": "partial", "data": {"step4_audio_url": step4_audio_url_web, "step4_stats": step4_stats}})
+
+            # Запускаем Deepgram таймкоды фоном сразу после генерации аудио
+            if step4_audio_url_orig:
+                from app.services.deepgram_service import generate_timecodes as _dg_timecodes
+                from app.db.database import update_result_with_timecodes as _update_timecodes
+                asyncio.create_task(_deepgram_background_for_slug(
+                    slug, step4_audio_url_orig, _dg_timecodes, _update_timecodes
+                ))
             
         except Exception as e:
             logger.error(f"Ошибка генерации аудио: {e}")
