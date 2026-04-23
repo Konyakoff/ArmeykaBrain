@@ -742,6 +742,35 @@ def migrate_saved_result_to_tree(slug: str, result_data: dict) -> list:
             created_at=now,
         )
         nodes.append(video_node)
+    elif audio_node and result_data.get("step5_video_id"):
+        # HeyGen ещё генерирует — создаём placeholder со статусом processing
+        s5 = result_data.get("step5_stats") or {}
+        if isinstance(s5, str):
+            try: s5 = json.loads(s5)
+            except: s5 = {}
+        video_node_pending = ResultNode(
+            slug=slug,
+            parent_node_id=audio_node.node_id,
+            node_type="video",
+            title="Видео #1",
+            status="processing",
+            position=0,
+            content_url=None,
+            params_json=json.dumps({
+                "heygen_engine": s5.get("heygen_engine", s5.get("engine", "avatar_iv")),
+                "avatar_id": s5.get("avatar_id", ""),
+                "avatar_style": s5.get("avatar_style", "normal"),
+                "video_format": s5.get("video_format", "16:9"),
+            }, ensure_ascii=False),
+            stats_json=json.dumps({
+                "total_cost": s5.get("total_cost"),
+                "video_id": result_data.get("step5_video_id"),
+                "status": "pending",
+                "model": "heygen_v2",
+            }, ensure_ascii=False),
+            created_at=now,
+        )
+        nodes.append(video_node_pending)
 
     # Сохраняем все узлы
     try:
