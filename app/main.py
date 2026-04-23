@@ -178,7 +178,10 @@ async def get_avatar_preview(avatar_id: str):
 # Модели Pydantic для валидации входных данных
 class QueryRequest(BaseModel):
     question: str = Field(..., min_length=1, description="Текст вопроса")
-    model: str = Field(default="gemini-3.1-pro-preview", description="Название модели")
+    model: str = Field(default="gemini-3.1-pro-preview", description="Название модели (общий fallback)")
+    model1: Optional[str] = Field(default=None, description="Модель для шага 1 (подбор статей)")
+    model2: Optional[str] = Field(default=None, description="Модель для шага 2 (экспертная статья)")
+    model3: Optional[str] = Field(default=None, description="Модель для шага 3 (аудио-сценарий)")
     style: str = Field(default="telegram_yur", description="Стиль ответа")
     context_threshold: int = Field(default=70, ge=0, le=100, description="Порог контекста (%)")
     max_length: int = Field(default=4000, description="Максимальная длина ответа в символах")
@@ -463,6 +466,9 @@ async def process_user_query(req: QueryRequest):
             slug=slug,
             question=req.question,
             model=req.model,
+            model1=req.model1 or req.model,
+            model2=req.model2 or req.model,
+            model3=req.model3 or req.model,
             style=req.style,
             context_threshold=req.context_threshold,
             send_prompts=req.send_prompts,

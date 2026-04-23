@@ -35,10 +35,22 @@
     </h2>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
         
-        <!-- Model -->
+        <!-- Models per step -->
         <div class="flex flex-col">
-            <label class="text-sm font-semibold text-gray-700 mb-2">Модель</label>
-            <select id="model-select" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
+            <label class="text-sm font-semibold text-gray-700 mb-2">ИИ-модель (подбор статей)</label>
+            <select id="model-select-1" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
+                <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Загрузка...)</option>
+            </select>
+        </div>
+        <div class="flex flex-col">
+            <label class="text-sm font-semibold text-gray-700 mb-2">ИИ-модель (экспертная статья)</label>
+            <select id="model-select-2" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
+                <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Загрузка...)</option>
+            </select>
+        </div>
+        <div class="audio-only flex flex-col hidden transition-all duration-300">
+            <label class="text-sm font-semibold text-gray-700 mb-2">ИИ-модель (аудио-сценарий)</label>
+            <select id="model-select-3" class="w-full rounded-xl p-4 text-brand-dark font-medium select-arrow border-2">
                 <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Загрузка...)</option>
             </select>
         </div>
@@ -663,5 +675,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/app.js?v=4.9"></script>
+<script src="/static/js/app.js?v=5.0"></script>
 {% endblock %}

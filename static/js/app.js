@@ -192,25 +192,38 @@ async function loadConfig() {
         const response = await fetch('/api/config');
         const data = await response.json();
         
-        const savedModel = localStorage.getItem('selectedModel') || data.default_model;
-        const modelSelect = document.getElementById('model-select');
+        const DEFAULT_MODEL = 'gemini-3.1-pro-preview';
 
-        // Группируем модели по провайдеру
+        // Группируем модели по провайдеру — строим общий HTML для переиспользования
         const geminiModels = data.models.filter(m => m.provider === 'gemini' || !m.provider);
         const claudeModels = data.models.filter(m => m.provider === 'claude');
-        let modelsHtml = '';
-        if (geminiModels.length > 0) {
-            modelsHtml += `<optgroup label="Gemini (Google)">` +
-                geminiModels.map(m => `<option value="${m.id}" ${m.id === savedModel ? 'selected' : ''}>${m.name}</option>`).join('') +
-                `</optgroup>`;
+        function buildModelsHtml(selectedId) {
+            let html = '';
+            if (geminiModels.length > 0) {
+                html += `<optgroup label="Gemini (Google)">` +
+                    geminiModels.map(m => `<option value="${m.id}" ${m.id === selectedId ? 'selected' : ''}>${m.name}</option>`).join('') +
+                    `</optgroup>`;
+            }
+            if (claudeModels.length > 0) {
+                html += `<optgroup label="Claude (Anthropic)">` +
+                    claudeModels.map(m => `<option value="${m.id}" ${m.id === selectedId ? 'selected' : ''}>${m.name}</option>`).join('') +
+                    `</optgroup>`;
+            }
+            return html;
         }
-        if (claudeModels.length > 0) {
-            modelsHtml += `<optgroup label="Claude (Anthropic)">` +
-                claudeModels.map(m => `<option value="${m.id}" ${m.id === savedModel ? 'selected' : ''}>${m.name}</option>`).join('') +
-                `</optgroup>`;
-        }
-        modelSelect.innerHTML = modelsHtml;
-        modelSelect.addEventListener('change', (e) => localStorage.setItem('selectedModel', e.target.value));
+
+        // Три независимых дропдауна — с сохранением в localStorage
+        [
+            { id: 'model-select-1', lsKey: 'selectedModel1' },
+            { id: 'model-select-2', lsKey: 'selectedModel2' },
+            { id: 'model-select-3', lsKey: 'selectedModel3' },
+        ].forEach(({ id, lsKey }) => {
+            const sel = document.getElementById(id);
+            if (!sel) return;
+            const saved = localStorage.getItem(lsKey) || localStorage.getItem('selectedModel') || data.default_model || DEFAULT_MODEL;
+            sel.innerHTML = buildModelsHtml(saved);
+            sel.addEventListener('change', (e) => localStorage.setItem(lsKey, e.target.value));
+        });
 
         const styleSelect = document.getElementById('style-select');
         const initialSavedStyle = localStorage.getItem(currentTab === 'text' ? 'selectedStyleText' : 'selectedStyleAudio') || (currentTab === 'text' ? 'telegram_yur' : 'audio_yur');
@@ -373,7 +386,9 @@ async function sendQuery() {
         return;
     }
 
-    const model = document.getElementById('model-select').value;
+    const model = document.getElementById('model-select-1')?.value || 'gemini-3.1-pro-preview';
+    const model2 = document.getElementById('model-select-2')?.value || model;
+    const model3 = document.getElementById('model-select-3')?.value || model;
     const style = document.getElementById('style-select').value;
     const threshold = parseInt(document.getElementById('context-threshold').value) || 70;
     const maxLength = parseInt(document.getElementById('max-length').value) || 4000;
@@ -435,6 +450,9 @@ async function sendQuery() {
             body: JSON.stringify({
                 question: question,
                 model: model,
+                model1: model,
+                model2: model2,
+                model3: model3,
                 style: style,
                 context_threshold: threshold,
                 max_length: maxLength,
