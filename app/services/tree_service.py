@@ -14,12 +14,8 @@ from app.db.database import (
     save_tree_node, get_tree_node, update_tree_node_status,
     count_siblings, update_tree_node_stats
 )
-from app.services.gemini_service import generate_audio_script, calculate_cost, get_model_info
-from app.services.claude_service import generate_audio_script_claude, calculate_claude_cost
-
-
-def _is_claude(model: str) -> bool:
-    return (model or "").startswith("claude-")
+from app.services.gemini_service import get_model_info
+from app.services.llm import get_provider
 from app.services.elevenlabs_service import generate_audio as elevenlabs_generate
 from app.services.heygen_service import generate_video_from_audio, check_video_status, calculate_heygen_cost
 from app.services.deepgram_service import generate_timecodes as deepgram_generate_timecodes
@@ -101,24 +97,19 @@ async def generate_script_node(queue: asyncio.Queue, slug: str,
             audio_prompts = PromptManager.get_audio_prompts()
             prompt_override = audio_prompts.get(prompt_key)
 
-        provider = "Claude" if _is_claude(model) else "Gemini"
-        await queue.put({"step": 3, "message": f"Генерация аудиосценария через {provider} ({model})..."})
+        llm = get_provider(model)
+        await queue.put({"step": 3, "message": f"Генерация аудиосценария через {llm.name.title()} ({model})..."})
         t0 = time.time()
-        if _is_claude(model):
-            result = await generate_audio_script_claude(article_text, duration=duration, wpm=wpm,
-                                                        override=prompt_override, model_name=model)
-        else:
-            result = await generate_audio_script(article_text, duration=duration, wpm=wpm,
-                                                 override=prompt_override)
+        result = await llm.audio_script(
+            article_text, duration=duration, wpm=wpm,
+            override=prompt_override, model=model,
+        )
         gen_time = round(time.time() - t0, 1)
 
         if not result or not result.script:
-            raise Exception(f"Пустой сценарий от {provider}")
+            raise Exception(f"Пустой сценарий от {llm.name.title()}")
 
-        if _is_claude(model):
-            in_cost, out_cost = calculate_claude_cost(result.in_tokens, result.out_tokens, model)
-        else:
-            in_cost, out_cost = calculate_cost(result.in_tokens, result.out_tokens, model)
+        in_cost, out_cost = llm.calculate_cost(result.in_tokens, result.out_tokens, model)
         stats = {
             "model": model,
             "in_tokens": result.in_tokens,
