@@ -50,14 +50,17 @@ async def generate_timecodes(audio_file_path: str) -> dict:
     if not os.path.exists(local_path):
         raise FileNotFoundError(f"Аудио файл не найден: {local_path}")
 
-    params = {
-        "model": "nova-3",
-        "language": "ru",
-        "smart_format": "true",
-        "punctuate": "true",
-        "paragraphs": "true",
-        "utterances": "true",
-    }
+    params = [
+        ("model",        "nova-3"),
+        ("language",     "ru"),
+        ("smart_format", "true"),
+        ("punctuate",    "true"),
+        ("paragraphs",   "true"),
+        ("utterances",   "true"),
+        # Keyterm Prompting (Nova-3): подсказываем написание бренда
+        ("keyterm",      "Армейка Нэт"),
+        ("keyterm",      "Армейка"),
+    ]
 
     headers = {
         "Authorization": f"Token {api_key}",
