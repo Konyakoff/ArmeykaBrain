@@ -23,6 +23,7 @@ os.environ.setdefault("ELEVENLABS_API_KEY", "test-eleven")
 os.environ.setdefault("HEYGEN_API_KEY", "test-heygen")
 os.environ.setdefault("DEEPGRAM_API_KEY", "test-deepgram")
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-claude")
+os.environ.setdefault("SUBMAGIC_API_KEY", "test-submagic")
 
 # Корень проекта в sys.path (на случай запуска не из корня)
 ROOT = pathlib.Path(__file__).resolve().parent.parent

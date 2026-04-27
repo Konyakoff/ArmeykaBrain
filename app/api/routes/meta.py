@@ -312,3 +312,26 @@ async def refresh_cache():
     background_tasks.add(task)
     task.add_done_callback(background_tasks.discard)
     return {"ok": True, "message": "Обновление запущено"}
+
+
+# ──────────────────────── /api/submagic/templates ─────────────────────────────
+
+_submagic_templates_cache: list[str] | None = None
+
+
+@router.get("/api/submagic/templates")
+async def get_submagic_templates():
+    """Returns cached list of Submagic caption templates."""
+    global _submagic_templates_cache
+    if _submagic_templates_cache is None:
+        try:
+            from app.services.submagic_service import get_templates
+            _submagic_templates_cache = await get_templates()
+        except Exception as e:
+            logger.error(f"Failed to fetch Submagic templates: {e}")
+            _submagic_templates_cache = [
+                "Hormozi 2", "Hormozi 1", "Hormozi 3", "Hormozi 4", "Hormozi 5",
+                "Sara", "Matt", "Jess", "Jack", "Nick", "Laura", "Kelly 2",
+                "Beast", "Karl", "Ella", "Dan", "Dan 2", "Devin",
+            ]
+    return {"templates": _submagic_templates_cache}

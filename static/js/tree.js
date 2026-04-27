@@ -13,17 +13,20 @@ let _treeStep3Prompts = {};    // словарь step3-промптов {name: t
 const _tcAutoPolled = new Set(); // node_id-ы, для которых уже запущен авто-поллинг таймкодов
 
 /* ─── Константы ────────────────────────────────────────────────────────── */
-const NODE_ICONS  = { article:'fa-align-left', script:'fa-microphone', audio:'fa-headphones', video:'fa-film' };
-const NODE_COLORS = { article:'#3b82f6', script:'#8b5cf6', audio:'#F47920', video:'#10b981' };
-const NODE_BGS    = { article:'#eff6ff', script:'#f5f3ff', audio:'#fff7ed', video:'#f0fdf4' };
-const SECTION_LABELS  = { article:'Сценарии', script:'Аудиофайлы', audio:'Видео' };
-const CHILD_TYPE      = { article:'script', script:'audio', audio:'video' };
-const ADD_LABELS      = { article:'Новый сценарий', script:'Новое аудио', audio:'Новое видео' };
+const NODE_ICONS  = { article:'fa-align-left', script:'fa-microphone', audio:'fa-headphones', video:'fa-film', montage:'fa-wand-magic-sparkles' };
+const NODE_COLORS = { article:'#3b82f6', script:'#8b5cf6', audio:'#F47920', video:'#10b981', montage:'#e11d48' };
+const NODE_BGS    = { article:'#eff6ff', script:'#f5f3ff', audio:'#fff7ed', video:'#f0fdf4', montage:'#fff1f2' };
+const SECTION_LABELS  = { article:'Сценарии', script:'Аудиофайлы', audio:'Видео', video:'Видео-монтаж' };
+const CHILD_TYPE      = { article:'script', script:'audio', audio:'video', video:'montage' };
+const ADD_LABELS      = { article:'Новый сценарий', script:'Новое аудио', audio:'Новое видео', video:'Новый монтаж' };
 const ADD_TOOLTIPS    = {
     article: 'Создать аудиосценарий на основе этой статьи',
     script:  'Сгенерировать аудиофайл из этого сценария',
     audio:   'Создать видео на основе этого аудио',
+    video:   'Создать видео-монтаж через Submagic',
 };
+
+let _submagicTemplates = [];
 
 /* ══════════════════════════════════════════════════════════════════════════
    CLASS ResultTree
@@ -46,7 +49,9 @@ class ResultTree {
 
     async load() {
         try {
-            const data = await fetch(`/api/tree/${this.slug}`).then(r => r.json());
+            const r = await fetch(`/api/tree/${this.slug}`);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const data = await r.json();
             this.nodesMap.clear();
             data.nodes.forEach(n => this.nodesMap.set(n.node_id, n));
             this._autoExpand();
@@ -54,6 +59,10 @@ class ResultTree {
             this._startPollingProcessing();
         } catch (e) {
             console.error('Tree load error:', e);
+            if (this.container) {
+                this.container.innerHTML =
+                    `<div class="tn-load-error"><i class="fas fa-exclamation-triangle"></i> Ошибка загрузки дерева: ${e.message}</div>`;
+            }
         }
     }
 
@@ -64,7 +73,7 @@ class ResultTree {
             if (n.node_type === 'article') this.expanded.add(n.node_id);
         });
         // Раскрываем последний script, последний audio, последний video
-        ['script', 'audio', 'video'].forEach(type => {
+        ['script', 'audio', 'video', 'montage'].forEach(type => {
             let last = null;
             this.nodesMap.forEach(n => { if (n.node_type === type) last = n; });
             if (last) this.expanded.add(last.node_id);
@@ -78,16 +87,26 @@ class ResultTree {
         const roots = [...this.nodesMap.values()].filter(n => !n.parent_node_id);
         roots.sort((a, b) => a.position - b.position);
         roots.forEach(n => {
-            // Перед корневым article-узлом вставляем карточку «Результаты шага 1»
-            if (n.node_type === 'article') {
-                const s1card = _buildStep1Card(n);
-                if (s1card) this.container.appendChild(s1card);
+            try {
+                // Перед корневым article-узлом вставляем карточку «Результаты шага 1»
+                if (n.node_type === 'article') {
+                    const s1card = _buildStep1Card(n);
+                    if (s1card) this.container.appendChild(s1card);
+                }
+                this.container.appendChild(this._buildNode(n));
+            } catch (e) {
+                console.error('Tree render node error:', e, n);
+                const errEl = document.createElement('div');
+                errEl.className = 'tn-load-error';
+                errEl.innerHTML = `<i class="fas fa-exclamation-triangle"></i> Ошибка рендера узла ${n.node_type}: ${e.message}`;
+                this.container.appendChild(errEl);
             }
-            this.container.appendChild(this._buildNode(n));
         });
         // Суммарная стоимость в конце дерева
-        const totalBar = _buildTotalBar(this.nodesMap);
-        if (totalBar) this.container.appendChild(totalBar);
+        try {
+            const totalBar = _buildTotalBar(this.nodesMap);
+            if (totalBar) this.container.appendChild(totalBar);
+        } catch(e) { console.error('_buildTotalBar error:', e); }
     }
 
     _buildNode(nodeData) {
@@ -271,7 +290,17 @@ class ResultTree {
                 childrenWrap.className = 'tn__children';
                 childrenWrap.style.setProperty('--tn-next-color', nextColor);
                 children.sort((a, b) => a.position - b.position);
-                children.forEach(c => childrenWrap.appendChild(this._buildNode(c)));
+                children.forEach(c => {
+                    try {
+                        childrenWrap.appendChild(this._buildNode(c));
+                    } catch (e) {
+                        console.error('Child node render error:', e, c);
+                        const errEl = document.createElement('div');
+                        errEl.className = 'tn-load-error';
+                        errEl.innerHTML = `<i class="fas fa-exclamation-triangle"></i> Ошибка рендера узла ${c.node_type}: ${e.message}`;
+                        childrenWrap.appendChild(errEl);
+                    }
+                });
                 section.appendChild(childrenWrap);
             }
 
@@ -472,6 +501,7 @@ function _buildContent(node) {
         case 'script':  return _contentScript(node);
         case 'audio':   return _contentAudio(node);
         case 'video':   return _contentVideo(node);
+        case 'montage': return _contentMontage(node);
         default: return null;
     }
 }
@@ -794,6 +824,64 @@ function _contentVideo(node) {
     return wrap;
 }
 
+/* ── MONTAGE ──────────────────────────────────────────────────────────── */
+function _contentMontage(node) {
+    const wrap = document.createElement('div');
+    wrap.className = 'tn__content';
+
+    if (node.content_url) {
+        const videoWrap = document.createElement('div');
+        videoWrap.className = 'tn__video-wrap';
+        const video = document.createElement('video');
+        video.controls = true;
+        video.preload = 'none';
+        video.src = node.content_url;
+        video.className = 'tn__video-el';
+        videoWrap.appendChild(video);
+        wrap.appendChild(videoWrap);
+    } else if (node.status === 'processing') {
+        const pending = document.createElement('div');
+        pending.className = 'tn__video-pending';
+        pending.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Видео-монтаж обрабатывается в Submagic...';
+        wrap.appendChild(pending);
+    } else if (node.status === 'failed') {
+        const errMsg = (node.stats_json || {}).error_message || 'Неизвестная ошибка';
+        const errEl = document.createElement('div');
+        errEl.className = 'tn__video-error';
+        errEl.innerHTML = `<i class="fas fa-exclamation-triangle"></i> <strong>Ошибка:</strong> ${errMsg}`;
+        wrap.appendChild(errEl);
+    }
+
+    const st = node.stats_json || {};
+    if (st.preview_url) {
+        const linkEl = document.createElement('a');
+        linkEl.href = st.preview_url;
+        linkEl.target = '_blank';
+        linkEl.className = 'tn__montage-preview-link';
+        linkEl.innerHTML = '<i class="fas fa-external-link-alt"></i> Открыть в Submagic';
+        wrap.appendChild(linkEl);
+    }
+
+    const paramParts = [];
+    if (st.template_name) paramParts.push(`Шаблон: ${st.template_name}`);
+    if (st.video_width && st.video_height) paramParts.push(`${st.video_width}×${st.video_height}`);
+    if (paramParts.length) {
+        const paramEl = document.createElement('div');
+        paramEl.className = 'tn__param-row';
+        paramEl.textContent = paramParts.join(' · ');
+        wrap.appendChild(paramEl);
+    }
+
+    if (Object.keys(st).length && st.status === 'completed') {
+        const genTime = st.generation_time_sec;
+        wrap.appendChild(_statsRow([
+            genTime ? `Время: ${Math.floor(genTime/60)}м ${genTime%60}с` : null,
+            'Submagic',
+        ]));
+    }
+    return wrap;
+}
+
 /* ── Строка статистики ─────────────────────────────────────────────────── */
 /* ── Карточка «Результаты поиска — Шаг 1» ────────────────────────────────
    Парсит текст из params_json.step1_info (markdown-строка) и отрисовывает
@@ -1044,7 +1132,7 @@ function _buildDisplayTitle(node, nodesMap) {
     const base = node.title || node.node_type;
     // Audio: only show extras when completed (duration is calculated at that point)
     // Video: always show format/duration since params are set at creation time
-    if (node.status !== 'completed' && node.node_type !== 'video') return base;
+    if (node.status !== 'completed' && node.node_type !== 'video' && node.node_type !== 'montage') return base;
 
     const p  = node.params_json || {};
     const st = node.stats_json  || {};
@@ -1076,6 +1164,13 @@ function _buildDisplayTitle(node, nodesMap) {
         const rawVoice  = p.voice_name || st.voice_name || '';
         const voiceName = rawVoice.split('(')[0].split(' - ')[0].trim();
         const extras    = [format || null, dur ? `${dur}с` : null, voiceName || null].filter(Boolean);
+        return extras.length ? `${base} (${extras.join(', ')})` : base;
+    }
+
+    if (node.node_type === 'montage') {
+        const tpl = st.template_name || p.template_name || '';
+        const dur = st.video_duration_sec;
+        const extras = [tpl || null, dur ? `${Math.round(dur)}с` : null].filter(Boolean);
         return extras.length ? `${base} (${extras.join(', ')})` : base;
     }
 
@@ -1135,6 +1230,41 @@ function _buildTags(node, nodesMap) {
             if (p.heygen_engine) parts.push(p.heygen_engine === 'avatar_iv' ? 'Av.IV' : 'Av.III');
             const style = p.avatar_style || st.avatar_style;
             if (style && style !== 'auto') parts.push(style);
+            break;
+        }
+        case 'montage': {
+            parts.push('SubMagic');
+            const mode = p.mode || st.mode || 'auto';
+            if (mode === 'smart') {
+                parts.push('Smart');
+                const density = p.density || st.density;
+                if (density) {
+                    const ru = { low: 'низкая', medium: 'средняя', high: 'высокая' };
+                    parts.push(`плотность: ${ru[density] || density}`);
+                }
+                const topic = p.topic_hint || st.topic_hint;
+                if (topic && topic !== 'auto') {
+                    const ruTopic = {
+                        law: 'право', army: 'армия', medical: 'медкомиссия',
+                        process: 'юр.процесс', general: 'общая'
+                    };
+                    parts.push(`тема: ${ruTopic[topic] || topic}`);
+                }
+                const cnt = st.broll_items_count;
+                if (cnt) parts.push(`B-roll: ${cnt}`);
+                const clipDur = p.clip_duration || st.clip_duration;
+                if (clipDur) parts.push(`${clipDur}с/вставка`);
+                const russiaOnly = (p.russia_only ?? st.russia_only);
+                if (russiaOnly) parts.push('Russia-only');
+            }
+            const tpl = p.template_name || st.template_name;
+            if (tpl) parts.push(tpl);
+            if (p.magic_zooms || st.magic_zooms) parts.push('Zoom');
+            if (mode === 'auto' && (p.magic_brolls || st.magic_brolls)) parts.push('B-roll');
+            if (p.clean_audio || st.clean_audio) parts.push('Clean');
+            const pace = p.remove_silence_pace || st.remove_silence_pace;
+            if (pace) parts.push(`silence:${pace}`);
+            if (p.remove_bad_takes || st.remove_bad_takes) parts.push('NoBad');
             break;
         }
     }
@@ -1202,7 +1332,7 @@ function openGenerateModal(parentNodeId, targetType) {
     const body  = document.getElementById('gm-body');
     if (!modal) return;
 
-    const labels = { script: 'Новый сценарий для аудио', audio: 'Новое аудио', video: 'Новое видео' };
+    const labels = { script: 'Новый сценарий для аудио', audio: 'Новое аудио', video: 'Новое видео', montage: 'Видео-монтаж (Submagic)' };
     title.textContent = labels[targetType] || 'Генерация';
 
     body.innerHTML = '';
@@ -1212,11 +1342,38 @@ function openGenerateModal(parentNodeId, targetType) {
     const submitBtn = document.getElementById('gm-submit-btn');
     if (submitBtn) {
         submitBtn.disabled = false;
-        submitBtn.innerHTML = '<i class="fas fa-bolt"></i> Сгенерировать';
+        if (targetType === 'montage') {
+            const mode = (localStorage.getItem('smMode') || 'auto');
+            _updateMontageSubmitLabel(mode);
+        } else {
+            submitBtn.innerHTML = '<i class="fas fa-bolt"></i> Сгенерировать';
+        }
     }
 
     modal.style.display = 'flex';
     document.body.style.overflow = 'hidden';
+}
+
+function _updateMontageSubmitLabel(mode) {
+    const btn = document.getElementById('gm-submit-btn');
+    if (!btn) return;
+    if (mode === 'smart') {
+        btn.innerHTML = '<i class="fas fa-brain"></i> Запустить умный монтаж';
+    } else {
+        btn.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> Начать монтаж';
+    }
+}
+
+function _onSmModeChange(mode) {
+    const auto  = document.getElementById('gm-sm-auto-fields');
+    const smart = document.getElementById('gm-sm-smart-fields');
+    if (auto)  auto.style.display  = mode === 'auto'  ? '' : 'none';
+    if (smart) smart.style.display = mode === 'smart' ? '' : 'none';
+    document.querySelectorAll('.gm-mode-tab').forEach(el => {
+        const inp = el.querySelector('input[type="radio"]');
+        el.classList.toggle('is-active', inp && inp.value === mode);
+    });
+    _updateMontageSubmitLabel(mode);
 }
 
 function closeGenerateModal() {
@@ -1384,6 +1541,194 @@ function _buildModalForm(type) {
 
             updateAvatarButtonText('gm-avatar-id', 'gm-avatar-btn', 'gm-video-format');
         }, 0);
+
+    } else if (type === 'montage') {
+        const savedMode     = _ls('smMode', 'auto');
+        const savedTemplate = _ls('smTemplate', 'Hormozi 2');
+        const savedZooms    = _ls('smZooms', 'true') === 'true';
+        const savedBrolls   = _ls('smBrolls', 'false') === 'true';
+        const savedBrollPct = _ls('smBrollPct', '50');
+        const savedSilence  = _ls('smSilence', '');
+        const savedBadTakes = _ls('smBadTakes', 'false') === 'true';
+        const savedClean    = _ls('smCleanAudio', 'false') === 'true';
+
+        const savedDensity   = _ls('smSmartDensity', 'medium');
+        const savedClipDur   = _ls('smSmartClipDur', '5');
+        const savedTopic     = _ls('smSmartTopic', 'auto');
+        const savedLayout    = _ls('smSmartLayout', 'cover');
+        const savedRussia    = _ls('smSmartRussia', 'true') === 'true';
+        const savedExtra     = _ls('smSmartExtra', '');
+        const savedLlm       = _ls('smSmartLlm', 'gemini-flash-latest');
+
+        const templateList = _submagicTemplates.length > 0 ? _submagicTemplates : [
+            'Hormozi 2','Hormozi 1','Hormozi 3','Hormozi 4','Hormozi 5',
+            'Sara','Matt','Jess','Jack','Nick','Laura','Kelly 2',
+            'Beast','Karl','Ella','Dan','Dan 2','Devin',
+        ];
+        const tplOptions = templateList.map(t =>
+            `<option value="${t}"${t === savedTemplate ? ' selected' : ''}>${t}</option>`
+        ).join('');
+
+        const isAuto  = savedMode !== 'smart';
+        const isSmart = savedMode === 'smart';
+
+        form.innerHTML = `
+        <div class="gm-row gm-row--mode">
+            <label class="gm-label">Режим монтажа
+                <span class="gm-hint-icon" data-tooltip="Auto — Submagic сам выбирает B-roll. Smart — мы используем таймкоды Deepgram + LLM с фильтром «только Россия».">?</span>
+            </label>
+            <div class="gm-mode-tabs">
+                <label class="gm-mode-tab${isAuto ? ' is-active' : ''}">
+                    <input type="radio" name="gm-sm-mode" value="auto" ${isAuto ? 'checked' : ''}
+                        onchange="_onSmModeChange('auto')">
+                    <i class="fas fa-magic"></i> Auto
+                </label>
+                <label class="gm-mode-tab${isSmart ? ' is-active' : ''}">
+                    <input type="radio" name="gm-sm-mode" value="smart" ${isSmart ? 'checked' : ''}
+                        onchange="_onSmModeChange('smart')">
+                    <i class="fas fa-brain"></i> Smart (Deepgram, RU)
+                </label>
+            </div>
+            <p class="gm-hint">Smart-режим работает с видео 20–90 сек. Если у родительского аудио ещё нет таймкодов — мы сгенерируем их автоматически (~30–60 с).</p>
+        </div>
+
+        <div class="gm-row">
+            <label class="gm-label">Шаблон субтитров
+                <span class="gm-hint-icon" data-tooltip="Визуальный стиль субтитров: шрифт, анимация, цвета. Hormozi 2 — один из самых популярных.">?</span>
+            </label>
+            <select id="gm-sm-template" class="gm-select">${tplOptions}</select>
+        </div>
+        <div class="gm-row gm-row--inline">
+            <label class="gm-label">AI Captions (субтитры)
+                <span class="gm-hint-icon" data-tooltip="ИИ автоматически создаёт субтитры к видео с анимацией и эффектами.">?</span>
+            </label>
+            <input type="checkbox" id="gm-sm-captions" checked disabled>
+        </div>
+        <div class="gm-row gm-row--inline">
+            <label class="gm-label">AI Auto Zooms
+                <span class="gm-hint-icon" data-tooltip="Автоматические zoom-эффекты на ключевых моментах для усиления вовлечённости.">?</span>
+            </label>
+            <input type="checkbox" id="gm-sm-zooms" ${savedZooms ? 'checked' : ''}>
+        </div>
+
+        <!-- ───────── AUTO-only fields ───────── -->
+        <div id="gm-sm-auto-fields" style="display:${isAuto ? '' : 'none'}">
+            <div class="gm-row gm-row--inline">
+                <label class="gm-label">AI Auto B-rolls
+                    <span class="gm-hint-icon" data-tooltip="ИИ Submagic автоматически вставляет фоновые видеоролики (B-roll). Внимание: возможно появление иностранной символики.">?</span>
+                </label>
+                <input type="checkbox" id="gm-sm-brolls" ${savedBrolls ? 'checked' : ''}
+                    onchange="document.getElementById('gm-sm-broll-pct-row').style.display=this.checked?'':'none'">
+            </div>
+            <div class="gm-row" id="gm-sm-broll-pct-row" style="display:${savedBrolls ? '' : 'none'}">
+                <label class="gm-label">B-roll %
+                    <span class="gm-hint-icon" data-tooltip="Какой процент видео заполнить B-roll вставками (0–100).">?</span>
+                </label>
+                <input type="number" id="gm-sm-broll-pct" value="${savedBrollPct}" min="0" max="100" class="gm-input">
+            </div>
+        </div>
+
+        <!-- ───────── SMART-only fields ───────── -->
+        <div id="gm-sm-smart-fields" style="display:${isSmart ? '' : 'none'}">
+            <div class="gm-row gm-row--2">
+                <div>
+                    <label class="gm-label">Плотность B-roll
+                        <span class="gm-hint-icon" data-tooltip="Низкая — 1 вставка на 30 с, Средняя — на 15 с, Высокая — на 9 с. Управляет количеством вставок.">?</span>
+                    </label>
+                    <select id="gm-sm-density" class="gm-select">
+                        <option value="low"    ${savedDensity==='low'?'selected':''}>Низкая</option>
+                        <option value="medium" ${savedDensity==='medium'?'selected':''}>Средняя</option>
+                        <option value="high"   ${savedDensity==='high'?'selected':''}>Высокая</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="gm-label">Длительность вставки
+                        <span class="gm-hint-icon" data-tooltip="Максимальная длина одной B-roll вставки. 3–5 с — динамичный клиповый стиль, 7–10 с — медленные иллюстративные кадры.">?</span>
+                    </label>
+                    <select id="gm-sm-clip-dur" class="gm-select">
+                        <option value="3"  ${savedClipDur==='3'?'selected':''}>3 с (клиповый)</option>
+                        <option value="4"  ${savedClipDur==='4'?'selected':''}>4 с (быстрый)</option>
+                        <option value="5"  ${savedClipDur==='5'?'selected':''}>5 с (стандарт)</option>
+                        <option value="7"  ${savedClipDur==='7'?'selected':''}>7 с (плавный)</option>
+                        <option value="10" ${savedClipDur==='10'?'selected':''}>10 с (длинный)</option>
+                    </select>
+                </div>
+            </div>
+            <div class="gm-row">
+                <div>
+                    <label class="gm-label">Тематика
+                        <span class="gm-hint-icon" data-tooltip="Контекст для LLM: помогает выбирать визуально подходящие сцены без иностранной символики.">?</span>
+                    </label>
+                    <select id="gm-sm-topic" class="gm-select">
+                        <option value="auto"    ${savedTopic==='auto'?'selected':''}>Авто (по тексту)</option>
+                        <option value="law"     ${savedTopic==='law'?'selected':''}>Военное право</option>
+                        <option value="army"    ${savedTopic==='army'?'selected':''}>Армия</option>
+                        <option value="medical" ${savedTopic==='medical'?'selected':''}>Медкомиссия</option>
+                        <option value="process" ${savedTopic==='process'?'selected':''}>Юридический процесс</option>
+                        <option value="general" ${savedTopic==='general'?'selected':''}>Общая</option>
+                    </select>
+                </div>
+            </div>
+            <div class="gm-row gm-row--2">
+                <div>
+                    <label class="gm-label">Layout
+                        <span class="gm-hint-icon" data-tooltip="Cover — B-roll на весь экран. Split 50/50 — половина экрана. PiP — картинка-в-картинке.">?</span>
+                    </label>
+                    <select id="gm-sm-layout" class="gm-select">
+                        <option value="cover"        ${savedLayout==='cover'?'selected':''}>Cover (полный экран)</option>
+                        <option value="split-50-50" ${savedLayout==='split-50-50'?'selected':''}>Split 50/50</option>
+                        <option value="pip"          ${savedLayout==='pip'?'selected':''}>PiP</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="gm-label">LLM для промптов
+                        <span class="gm-hint-icon" data-tooltip="Gemini Flash — быстрый и почти бесплатный. Pro — качественнее, но дороже.">?</span>
+                    </label>
+                    <select id="gm-sm-llm" class="gm-select">
+                        <option value="gemini-flash-latest" ${savedLlm==='gemini-flash-latest'?'selected':''}>Gemini Flash</option>
+                        <option value="gemini-pro-latest"   ${savedLlm==='gemini-pro-latest'?'selected':''}>Gemini Pro</option>
+                    </select>
+                </div>
+            </div>
+            <div class="gm-row gm-row--inline">
+                <label class="gm-label">Только российская символика
+                    <span class="gm-hint-icon" data-tooltip="Запрещает в B-roll иностранные флаги, форму, политиков. Рекомендуется не выключать.">?</span>
+                </label>
+                <input type="checkbox" id="gm-sm-russia" ${savedRussia ? 'checked' : ''}>
+            </div>
+            <div class="gm-row">
+                <label class="gm-label">Дополнительные пожелания к B-roll
+                    <span class="gm-hint-icon" data-tooltip="Свободный текст: «больше документов», «избегать оружия» и т.п. Передаётся LLM как подсказка.">?</span>
+                </label>
+                <textarea id="gm-sm-extra" class="gm-input" rows="2" maxlength="300"
+                    placeholder="Например: больше архивных документов и работы за столом">${savedExtra}</textarea>
+            </div>
+        </div>
+
+        <div class="gm-row">
+            <label class="gm-label">Remove Silence
+                <span class="gm-hint-icon" data-tooltip="Удаляет паузы из видео. Natural — мягко, Fast — агрессивно, Extra-fast — максимально.">?</span>
+            </label>
+            <select id="gm-sm-silence" class="gm-select">
+                <option value="" ${!savedSilence ? 'selected' : ''}>Отключено</option>
+                <option value="natural" ${savedSilence==='natural' ? 'selected' : ''}>Natural (мягко)</option>
+                <option value="fast" ${savedSilence==='fast' ? 'selected' : ''}>Fast (быстро)</option>
+                <option value="extra-fast" ${savedSilence==='extra-fast' ? 'selected' : ''}>Extra-fast (максимально)</option>
+            </select>
+        </div>
+        <div class="gm-row gm-row--inline">
+            <label class="gm-label">Remove Bad Takes
+                <span class="gm-hint-icon" data-tooltip="ИИ анализирует видео и удаляет неудачные дубли и паузы.">?</span>
+            </label>
+            <input type="checkbox" id="gm-sm-bad-takes" ${savedBadTakes ? 'checked' : ''}>
+        </div>
+        <div class="gm-row gm-row--inline">
+            <label class="gm-label">Clean Audio
+                <span class="gm-hint-icon" data-tooltip="ИИ убирает фоновые шумы из аудиодорожки видео.">?</span>
+            </label>
+            <input type="checkbox" id="gm-sm-clean" ${savedClean ? 'checked' : ''}>
+        </div>
+        `;
     }
 
     return form;
@@ -1437,6 +1782,36 @@ function _collectModalParams(type) {
             video_format: g('gm-video-format')?.value || '9:16',
             avatar_style: g('gm-style-av')?.value || 'auto',
         };
+    } else if (type === 'montage') {
+        const modeInput = document.querySelector('input[name="gm-sm-mode"]:checked');
+        const mode = modeInput?.value || 'auto';
+        const common = {
+            mode,
+            template_name: g('gm-sm-template')?.value || 'Hormozi 2',
+            magic_zooms: g('gm-sm-zooms')?.checked ?? true,
+            remove_silence_pace: g('gm-sm-silence')?.value || null,
+            remove_bad_takes: g('gm-sm-bad-takes')?.checked ?? false,
+            clean_audio: g('gm-sm-clean')?.checked ?? false,
+        };
+        if (mode === 'smart') {
+            return {
+                ...common,
+                magic_brolls: false,
+                magic_brolls_pct: 0,
+                density:       g('gm-sm-density')?.value || 'medium',
+                clip_duration: parseInt(g('gm-sm-clip-dur')?.value || '5'),
+                topic_hint:    g('gm-sm-topic')?.value || 'auto',
+                layout:        g('gm-sm-layout')?.value || 'cover',
+                russia_only:   g('gm-sm-russia')?.checked ?? true,
+                extra_prompt:  g('gm-sm-extra')?.value || '',
+                llm_model:     g('gm-sm-llm')?.value || 'gemini-flash-latest',
+            };
+        }
+        return {
+            ...common,
+            magic_brolls: g('gm-sm-brolls')?.checked ?? false,
+            magic_brolls_pct: parseInt(g('gm-sm-broll-pct')?.value || '50'),
+        };
     }
     return {};
 }
@@ -1462,6 +1837,25 @@ function _saveModalParams(type, params) {
         if (params.heygen_engine) localStorage.setItem('heygenEngine', params.heygen_engine);
         if (params.video_format)  localStorage.setItem('videoFormat',  params.video_format);
         if (params.avatar_style)  localStorage.setItem('avatarStyle',  params.avatar_style);
+    }
+    if (type === 'montage') {
+        localStorage.setItem('smMode',         params.mode || 'auto');
+        localStorage.setItem('smTemplate',     params.template_name || 'Hormozi 2');
+        localStorage.setItem('smZooms',        params.magic_zooms ? 'true' : 'false');
+        localStorage.setItem('smBrolls',       params.magic_brolls ? 'true' : 'false');
+        localStorage.setItem('smBrollPct',     String(params.magic_brolls_pct || 50));
+        localStorage.setItem('smSilence',      params.remove_silence_pace || '');
+        localStorage.setItem('smBadTakes',     params.remove_bad_takes ? 'true' : 'false');
+        localStorage.setItem('smCleanAudio',   params.clean_audio ? 'true' : 'false');
+        if (params.mode === 'smart') {
+            localStorage.setItem('smSmartDensity', params.density || 'medium');
+            localStorage.setItem('smSmartClipDur', String(params.clip_duration || 5));
+            localStorage.setItem('smSmartTopic',   params.topic_hint || 'auto');
+            localStorage.setItem('smSmartLayout',  params.layout || 'cover');
+            localStorage.setItem('smSmartRussia',  params.russia_only ? 'true' : 'false');
+            localStorage.setItem('smSmartExtra',   params.extra_prompt || '');
+            localStorage.setItem('smSmartLlm',     params.llm_model || 'gemini-flash-latest');
+        }
     }
 }
 
@@ -1645,12 +2039,16 @@ async function initResultTree(slug) {
 
     try {
         const pm = await fetch('/api/prompts').then(r => r.json());
-        // Фильтруем служебные ключи, оставляем только пользовательские промпты
         const HIDDEN_KEYS = new Set(['v1', 'v2', 'evaluation']);
         _treeStep3Prompts = Object.fromEntries(
             Object.entries(pm.prompts?.step3 || {}).filter(([k]) => !HIDDEN_KEYS.has(k))
         );
     } catch (e) { console.warn('Не удалось загрузить промпты:', e); }
+
+    try {
+        const sm = await fetch('/api/submagic/templates').then(r => r.json());
+        _submagicTemplates = sm.templates || [];
+    } catch (e) { console.warn('Не удалось загрузить Submagic шаблоны:', e); }
 
     _tree = new ResultTree(slug);
     window._tree = _tree;
