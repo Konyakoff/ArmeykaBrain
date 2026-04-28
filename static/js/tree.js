@@ -489,6 +489,29 @@ class ResultTree {
             if (saved) JSON.parse(saved).forEach(id => this.expanded.add(id));
         } catch(e) {}
     }
+
+    /** Показывает нефатальное предупреждение (toast-уведомление) */
+    _showWarningToast(message) {
+        const existing = document.getElementById('tree-warning-toast');
+        if (existing) existing.remove();
+
+        const toast = document.createElement('div');
+        toast.id = 'tree-warning-toast';
+        toast.style.cssText = [
+            'position:fixed', 'bottom:24px', 'left:50%', 'transform:translateX(-50%)',
+            'max-width:560px', 'width:90%', 'background:#92400e', 'color:#fef3c7',
+            'border:1px solid #b45309', 'border-radius:8px', 'padding:12px 16px',
+            'font-size:13px', 'line-height:1.5', 'z-index:9999',
+            'box-shadow:0 4px 16px rgba(0,0,0,0.4)', 'cursor:pointer',
+        ].join(';');
+        toast.title = 'Нажмите, чтобы закрыть';
+        toast.textContent = message;
+        toast.onclick = () => toast.remove();
+        document.body.appendChild(toast);
+
+        // Автоудаление через 12 секунд
+        setTimeout(() => { if (toast.parentNode) toast.remove(); }, 12000);
+    }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -839,10 +862,21 @@ function _contentMontage(node) {
         video.className = 'tn__video-el';
         videoWrap.appendChild(video);
         wrap.appendChild(videoWrap);
+
+        const dl = document.createElement('a');
+        dl.href = node.content_url;
+        dl.download = '';
+        dl.className = 'tn__dl-btn';
+        dl.title = 'Скачать видео-монтаж';
+        dl.innerHTML = '<i class="fas fa-download"></i> Скачать';
+        dl.style.cssText = 'display:inline-flex;align-items:center;gap:6px;margin-bottom:8px;font-size:13px;font-weight:500;';
+        wrap.appendChild(dl);
     } else if (node.status === 'processing') {
+        const svc = ((node.params_json || {}).service || (node.stats_json || {}).service || 'submagic');
+        const svcLabel = svc === 'creatomate' ? 'Creatomate' : 'Submagic';
         const pending = document.createElement('div');
         pending.className = 'tn__video-pending';
-        pending.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Видео-монтаж обрабатывается в Submagic...';
+        pending.innerHTML = `<i class="fas fa-circle-notch fa-spin"></i> Видео-монтаж обрабатывается в ${svcLabel}...`;
         wrap.appendChild(pending);
     } else if (node.status === 'failed') {
         const errMsg = (node.stats_json || {}).error_message || 'Неизвестная ошибка';
@@ -1233,13 +1267,45 @@ function _buildTags(node, nodesMap) {
             break;
         }
         case 'montage': {
+            const service = (st.service || p.service || 'submagic').toLowerCase();
+
+            if (service === 'creatomate') {
+                parts.push('Creatomate');
+                const fmt = st.video_format || p.video_format;
+                if (fmt) parts.push(fmt);
+                const fps = st.fps || p.fps;
+                if (fps) parts.push(`${fps}fps`);
+                const dur = st.video_duration_sec;
+                if (dur) parts.push(`${Math.round(dur)}с`);
+                const preset = st.subtitle_preset || p.subtitle_preset;
+                if (preset) parts.push(preset.replace('_', ' '));
+                const eff = st.transcript_effect || p.transcript_effect;
+                if (eff && eff !== 'karaoke') parts.push(eff);
+                const broll = st.broll || {};
+                if (broll.fetched_count) {
+                    const layoutLabel = {overlay:'overlay', pip:'PIP', split:'split'}[st.broll_layout] || '';
+                    const layoutStr = layoutLabel ? ` [${layoutLabel}]` : '';
+                    parts.push(`B-roll: ${broll.fetched_count}/${broll.planned_count} (${broll.provider}${layoutStr})`);
+                }
+                if (st.color_filter) parts.push(`фильтр: ${st.color_filter}`);
+                if (st.intro_text)   parts.push('intro');
+                if (st.outro_text)   parts.push('outro');
+                if (st.watermark_url) parts.push('logo');
+                if (st.music_url)    parts.push('music');
+                const credits = st.credits;
+                if (credits) parts.push(`${credits} crd`);
+                const cost = st.total_cost ?? st.render_cost_usd;
+                if (cost != null) parts.push(`$${Number(cost).toFixed(3)}`);
+                break;
+            }
+
             parts.push('SubMagic');
             const mode = p.mode || st.mode || 'auto';
             if (mode === 'smart') {
                 parts.push('Smart');
                 const density = p.density || st.density;
                 if (density) {
-                    const ru = { low: 'низкая', medium: 'средняя', high: 'высокая' };
+                    const ru = { low: 'низкая', medium: 'средняя', high: 'высокая', very_high: 'очень высокая' };
                     parts.push(`плотность: ${ru[density] || density}`);
                 }
                 const topic = p.topic_hint || st.topic_hint;
@@ -1369,11 +1435,34 @@ function _onSmModeChange(mode) {
     const smart = document.getElementById('gm-sm-smart-fields');
     if (auto)  auto.style.display  = mode === 'auto'  ? '' : 'none';
     if (smart) smart.style.display = mode === 'smart' ? '' : 'none';
-    document.querySelectorAll('.gm-mode-tab').forEach(el => {
+    document.querySelectorAll('.gm-mode-tab[data-group="mode"]').forEach(el => {
         const inp = el.querySelector('input[type="radio"]');
         el.classList.toggle('is-active', inp && inp.value === mode);
     });
     _updateMontageSubmitLabel(mode);
+}
+
+function _onSmServiceChange(svc) {
+    const sm = document.getElementById('gm-svc-submagic');
+    const ct = document.getElementById('gm-svc-creatomate');
+    if (sm) sm.style.display = svc === 'submagic'  ? '' : 'none';
+    if (ct) ct.style.display = svc === 'creatomate' ? '' : 'none';
+    document.querySelectorAll('.gm-mode-tab[data-group="service"]').forEach(el => {
+        const inp = el.querySelector('input[type="radio"]');
+        el.classList.toggle('is-active', inp && inp.value === svc);
+    });
+}
+
+function _onCtBrollProviderChange(prov) {
+    const stockPanel = document.getElementById('gm-ct-stock-fields');
+    const aiPanel    = document.getElementById('gm-ct-ai-fields');
+    const showStock  = ['pexels', 'pixabay', 'pexels_pixabay'].includes(prov);
+    const showAi     = ['veo', 'runway', 'luma'].includes(prov);
+    const showAny    = showStock || showAi;
+    const wrap = document.getElementById('gm-ct-broll-fields');
+    if (wrap)       wrap.style.display       = showAny ? '' : 'none';
+    if (stockPanel) stockPanel.style.display = showStock ? '' : 'none';
+    if (aiPanel)    aiPanel.style.display    = showAi ? '' : 'none';
 }
 
 function closeGenerateModal() {
@@ -1572,18 +1661,71 @@ function _buildModalForm(type) {
         const isAuto  = savedMode !== 'smart';
         const isSmart = savedMode === 'smart';
 
+        const savedService = _ls('mtgService', 'submagic');
+        const isSubmagic   = savedService !== 'creatomate';
+        const isCreatomate = savedService === 'creatomate';
+
+        // ── Creatomate-saved settings ──
+        const ctFormat   = _ls('ctFormat', '9:16');
+        const ctFps      = _ls('ctFps', '30');
+        const ctSubPreset= _ls('ctSubPreset', 'hormozi_white');
+        const ctSubEffect= _ls('ctSubEffect', 'karaoke');
+        const ctSubSplit = _ls('ctSubSplit', 'word');
+        const ctMusicUrl = _ls('ctMusicUrl', '');
+        const ctMusicVol = _ls('ctMusicVol', '25');
+        const ctIntroTxt = _ls('ctIntroText', '');
+        const ctOutroTxt = _ls('ctOutroText', 'Подписывайтесь и будьте свободны с Армейка Нэт');
+        const ctWatermark= _ls('ctWatermark', '');
+        const ctWmPos    = _ls('ctWmPos', 'top-right');
+        const ctColor    = _ls('ctColor', '');
+        const ctColorVal = _ls('ctColorVal', '20%');
+
+        const ctBrollProv= _ls('ctBrollProv', 'off');
+        const ctBrollDens= _ls('ctBrollDens', 'medium');
+        const ctBrollDur = _ls('ctBrollDur', '5');
+        const ctBrollLayout = _ls('ctBrollLayout', 'overlay');
+        const ctBrollTopic = _ls('ctBrollTopic', 'auto');
+        const ctBrollExtra = _ls('ctBrollExtra', '');
+        const ctBrollLlm   = _ls('ctBrollLlm', 'gemini-flash-latest');
+        const ctBrollRu    = _ls('ctBrollRu', 'true') === 'true';
+
+        const showCtBroll = ['pexels','pixabay','pexels_pixabay','veo','runway','luma'].includes(ctBrollProv);
+        const showCtStock = ['pexels','pixabay','pexels_pixabay'].includes(ctBrollProv);
+        const showCtAi    = ['veo','runway','luma'].includes(ctBrollProv);
+
         form.innerHTML = `
+        <!-- ═════════ ПЕРЕКЛЮЧАТЕЛЬ СЕРВИСА ═════════ -->
+        <div class="gm-row gm-row--mode">
+            <label class="gm-label">Сервис монтажа
+                <span class="gm-hint-icon" data-tooltip="Submagic — готовый AI-сервис с авто B-roll. Creatomate — программный монтаж с гибкой настройкой и выбором источника B-roll (стоки, AI-генерация).">?</span>
+            </label>
+            <div class="gm-mode-tabs">
+                <label class="gm-mode-tab${isSubmagic ? ' is-active' : ''}" data-group="service">
+                    <input type="radio" name="gm-sm-service" value="submagic" ${isSubmagic ? 'checked' : ''}
+                        onchange="_onSmServiceChange('submagic')">
+                    <i class="fas fa-bolt"></i> Submagic
+                </label>
+                <label class="gm-mode-tab${isCreatomate ? ' is-active' : ''}" data-group="service">
+                    <input type="radio" name="gm-sm-service" value="creatomate" ${isCreatomate ? 'checked' : ''}
+                        onchange="_onSmServiceChange('creatomate')">
+                    <i class="fas fa-cubes"></i> Creatomate
+                </label>
+            </div>
+        </div>
+
+        <!-- ═════════ SUBMAGIC PANEL ═════════ -->
+        <div id="gm-svc-submagic" style="display:${isSubmagic ? '' : 'none'}">
         <div class="gm-row gm-row--mode">
             <label class="gm-label">Режим монтажа
                 <span class="gm-hint-icon" data-tooltip="Auto — Submagic сам выбирает B-roll. Smart — мы используем таймкоды Deepgram + LLM с фильтром «только Россия».">?</span>
             </label>
             <div class="gm-mode-tabs">
-                <label class="gm-mode-tab${isAuto ? ' is-active' : ''}">
+                <label class="gm-mode-tab${isAuto ? ' is-active' : ''}" data-group="mode">
                     <input type="radio" name="gm-sm-mode" value="auto" ${isAuto ? 'checked' : ''}
                         onchange="_onSmModeChange('auto')">
                     <i class="fas fa-magic"></i> Auto
                 </label>
-                <label class="gm-mode-tab${isSmart ? ' is-active' : ''}">
+                <label class="gm-mode-tab${isSmart ? ' is-active' : ''}" data-group="mode">
                     <input type="radio" name="gm-sm-mode" value="smart" ${isSmart ? 'checked' : ''}
                         onchange="_onSmModeChange('smart')">
                     <i class="fas fa-brain"></i> Smart (Deepgram, RU)
@@ -1636,9 +1778,10 @@ function _buildModalForm(type) {
                         <span class="gm-hint-icon" data-tooltip="Низкая — 1 вставка на 30 с, Средняя — на 15 с, Высокая — на 9 с. Управляет количеством вставок.">?</span>
                     </label>
                     <select id="gm-sm-density" class="gm-select">
-                        <option value="low"    ${savedDensity==='low'?'selected':''}>Низкая</option>
-                        <option value="medium" ${savedDensity==='medium'?'selected':''}>Средняя</option>
-                        <option value="high"   ${savedDensity==='high'?'selected':''}>Высокая</option>
+                        <option value="low"       ${savedDensity==='low'?'selected':''}>Низкая</option>
+                        <option value="medium"    ${savedDensity==='medium'?'selected':''}>Средняя</option>
+                        <option value="high"      ${savedDensity==='high'?'selected':''}>Высокая</option>
+                        <option value="very_high" ${savedDensity==='very_high'?'selected':''}>Очень высокая</option>
                     </select>
                 </div>
                 <div>
@@ -1728,6 +1871,249 @@ function _buildModalForm(type) {
             </label>
             <input type="checkbox" id="gm-sm-clean" ${savedClean ? 'checked' : ''}>
         </div>
+        </div><!-- /gm-svc-submagic -->
+
+        <!-- ═════════ CREATOMATE PANEL ═════════ -->
+        <div id="gm-svc-creatomate" style="display:${isCreatomate ? '' : 'none'}">
+            <div class="gm-row gm-row--2">
+                <div>
+                    <label class="gm-label">Формат видео
+                        <span class="gm-hint-icon" data-tooltip="9:16 — для Reels/Shorts/TikTok. 16:9 — YouTube. 1:1 — Instagram квадрат. 4:5 — Instagram портрет.">?</span>
+                    </label>
+                    <select id="gm-ct-format" class="gm-select">
+                        <option value="9:16" ${ctFormat==='9:16'?'selected':''}>9:16 — Reels/Shorts (1080×1920)</option>
+                        <option value="16:9" ${ctFormat==='16:9'?'selected':''}>16:9 — YouTube (1920×1080)</option>
+                        <option value="1:1"  ${ctFormat==='1:1' ?'selected':''}>1:1 — Instagram (1080×1080)</option>
+                        <option value="4:5"  ${ctFormat==='4:5' ?'selected':''}>4:5 — IG портрет (1080×1350)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="gm-label">FPS
+                        <span class="gm-hint-icon" data-tooltip="Кадров в секунду. 30 — стандарт. 60 — плавнее, но в 2 раза дороже.">?</span>
+                    </label>
+                    <select id="gm-ct-fps" class="gm-select">
+                        <option value="24" ${ctFps==='24'?'selected':''}>24 fps (киношный)</option>
+                        <option value="25" ${ctFps==='25'?'selected':''}>25 fps</option>
+                        <option value="30" ${ctFps==='30'?'selected':''}>30 fps (стандарт)</option>
+                        <option value="60" ${ctFps==='60'?'selected':''}>60 fps (плавный, дороже)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="gm-row gm-row--2">
+                <div>
+                    <label class="gm-label">Стиль субтитров
+                        <span class="gm-hint-icon" data-tooltip="Визуальный пресет: шрифт, цвет, обводка, фон. Hormozi — viral-стиль, армейский — зелёный фон.">?</span>
+                    </label>
+                    <select id="gm-ct-sub-preset" class="gm-select">
+                        <option value="hormozi_white"  ${ctSubPreset==='hormozi_white' ?'selected':''}>Hormozi (белый, обводка)</option>
+                        <option value="hormozi_yellow" ${ctSubPreset==='hormozi_yellow'?'selected':''}>Hormozi (жёлтый акцент)</option>
+                        <option value="army_green"     ${ctSubPreset==='army_green'    ?'selected':''}>Армейский (зелёный фон)</option>
+                        <option value="minimal_dark"   ${ctSubPreset==='minimal_dark'  ?'selected':''}>Минимал (тёмный фон)</option>
+                        <option value="tiktok_white"   ${ctSubPreset==='tiktok_white'  ?'selected':''}>TikTok (белый)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="gm-label">Эффект слов
+                        <span class="gm-hint-icon" data-tooltip="Karaoke — последовательная подсветка. Highlight — выделение текущего. Color — смена цвета.">?</span>
+                    </label>
+                    <select id="gm-ct-sub-effect" class="gm-select">
+                        <option value="karaoke"   ${ctSubEffect==='karaoke'  ?'selected':''}>Karaoke (бегущая подсветка)</option>
+                        <option value="highlight" ${ctSubEffect==='highlight'?'selected':''}>Highlight (выделение)</option>
+                        <option value="color"     ${ctSubEffect==='color'    ?'selected':''}>Color (смена цвета)</option>
+                        <option value="bounce"    ${ctSubEffect==='bounce'   ?'selected':''}>Bounce (анимация)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="gm-row">
+                <label class="gm-label">Разбиение субтитров
+                    <span class="gm-hint-icon" data-tooltip="Word — по одному слову. Line — целыми строками. Word — лучше для viral-стиля.">?</span>
+                </label>
+                <select id="gm-ct-sub-split" class="gm-select">
+                    <option value="word" ${ctSubSplit==='word'?'selected':''}>По словам</option>
+                    <option value="line" ${ctSubSplit==='line'?'selected':''}>По строкам</option>
+                </select>
+            </div>
+
+            <!-- ── B-roll selector ── -->
+            <div class="gm-row">
+                <label class="gm-label">Источник B-roll
+                    <span class="gm-hint-icon" data-tooltip="Выберите откуда брать видео-вставки. Стоки бесплатны, но менее тематичны. AI-генерация дороже, но даёт уникальные сцены.">?</span>
+                </label>
+                <select id="gm-ct-broll-prov" class="gm-select" onchange="_onCtBrollProviderChange(this.value)">
+                    <option value="off"             ${ctBrollProv==='off'?'selected':''}>Без B-roll вставок</option>
+                    <optgroup label="Стоковые сервисы (бесплатно)">
+                        <option value="pexels"          ${ctBrollProv==='pexels'?'selected':''}>Pexels</option>
+                        <option value="pixabay"         ${ctBrollProv==='pixabay'?'selected':''}>Pixabay</option>
+                        <option value="pexels_pixabay"  ${ctBrollProv==='pexels_pixabay'?'selected':''}>Pexels + Pixabay (fallback)</option>
+                    </optgroup>
+                    <optgroup label="AI-генерация видео (платно)">
+                        <option value="veo"    ${ctBrollProv==='veo'?'selected':''}>Google Veo (~$0.50/клип)</option>
+                        <option value="runway" ${ctBrollProv==='runway'?'selected':''}>Runway Gen-4 (~$0.25/клип)</option>
+                        <option value="luma"   ${ctBrollProv==='luma'?'selected':''}>Luma Dream Machine (~$0.20/клип)</option>
+                    </optgroup>
+                </select>
+            </div>
+
+            <div id="gm-ct-broll-fields" style="display:${showCtBroll ? '' : 'none'}">
+                <div class="gm-row">
+                    <label class="gm-label">Режим B-roll вставки
+                        <span class="gm-hint-icon" data-tooltip="Overlay — B-roll на весь экран (спикер скрывается). PIP — маленькое окно в углу (спикер виден). Split — экран делится пополам: спикер слева, B-roll справа.">?</span>
+                    </label>
+                    <select id="gm-ct-broll-layout" class="gm-select">
+                        <option value="overlay" ${ctBrollLayout==='overlay'?'selected':''}>Overlay — на весь экран</option>
+                        <option value="pip"     ${ctBrollLayout==='pip'    ?'selected':''}>PIP — окно в углу</option>
+                        <option value="split"   ${ctBrollLayout==='split'  ?'selected':''}>Split — пополам</option>
+                    </select>
+                </div>
+                <div class="gm-row gm-row--2">
+                    <div>
+                        <label class="gm-label">Плотность B-roll
+                            <span class="gm-hint-icon" data-tooltip="Низкая — 1 на 30 с, Средняя — 1 на 15 с, Высокая — 1 на 9 с, Очень высокая — 1 на 6 с.">?</span>
+                        </label>
+                        <select id="gm-ct-broll-dens" class="gm-select">
+                            <option value="low"       ${ctBrollDens==='low'?'selected':''}>Низкая</option>
+                            <option value="medium"    ${ctBrollDens==='medium'?'selected':''}>Средняя</option>
+                            <option value="high"      ${ctBrollDens==='high'?'selected':''}>Высокая</option>
+                            <option value="very_high" ${ctBrollDens==='very_high'?'selected':''}>Очень высокая</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="gm-label">Длительность вставки
+                            <span class="gm-hint-icon" data-tooltip="Максимум секунд на одну B-roll. Короче = динамичнее.">?</span>
+                        </label>
+                        <select id="gm-ct-broll-dur" class="gm-select">
+                            <option value="3"  ${ctBrollDur==='3'?'selected':''}>3 с (клиповый)</option>
+                            <option value="4"  ${ctBrollDur==='4'?'selected':''}>4 с (быстрый)</option>
+                            <option value="5"  ${ctBrollDur==='5'?'selected':''}>5 с (стандарт)</option>
+                            <option value="7"  ${ctBrollDur==='7'?'selected':''}>7 с (плавный)</option>
+                            <option value="10" ${ctBrollDur==='10'?'selected':''}>10 с (длинный)</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="gm-row gm-row--2">
+                    <div>
+                        <label class="gm-label">Тематика
+                            <span class="gm-hint-icon" data-tooltip="Подсказка LLM для генерации поисковых запросов / визуальных промптов.">?</span>
+                        </label>
+                        <select id="gm-ct-broll-topic" class="gm-select">
+                            <option value="auto"    ${ctBrollTopic==='auto'?'selected':''}>Авто (по тексту)</option>
+                            <option value="law"     ${ctBrollTopic==='law'?'selected':''}>Военное право</option>
+                            <option value="army"    ${ctBrollTopic==='army'?'selected':''}>Армия</option>
+                            <option value="medical" ${ctBrollTopic==='medical'?'selected':''}>Медкомиссия</option>
+                            <option value="process" ${ctBrollTopic==='process'?'selected':''}>Юридический процесс</option>
+                            <option value="general" ${ctBrollTopic==='general'?'selected':''}>Общая</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="gm-label">LLM для генерации
+                            <span class="gm-hint-icon" data-tooltip="Модель, которая будет генерировать поисковые запросы / визуальные промпты для каждой вставки.">?</span>
+                        </label>
+                        <select id="gm-ct-broll-llm" class="gm-select">
+                            <option value="gemini-flash-latest" ${ctBrollLlm==='gemini-flash-latest'?'selected':''}>Gemini Flash (быстро)</option>
+                            <option value="gemini-pro-latest"   ${ctBrollLlm==='gemini-pro-latest'?'selected':''}>Gemini Pro (качественнее)</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="gm-row gm-row--inline">
+                    <label class="gm-label">Только российская символика
+                        <span class="gm-hint-icon" data-tooltip="Запрещает в B-roll иностранные флаги, форму, политиков. Рекомендуется не выключать.">?</span>
+                    </label>
+                    <input type="checkbox" id="gm-ct-broll-ru" ${ctBrollRu ? 'checked' : ''}>
+                </div>
+                <div id="gm-ct-stock-fields" style="display:${showCtStock ? '' : 'none'}">
+                    <p class="gm-hint">Стоковые сервисы бесплатны, но иногда выдают неподходящие клипы. Если ничего не найдено — слот пропускается.</p>
+                </div>
+                <div id="gm-ct-ai-fields" style="display:${showCtAi ? '' : 'none'}">
+                    <p class="gm-hint" style="color:#dc2626;"><i class="fas fa-info-circle"></i> Внимание: AI-генерация занимает 30–120 с на клип. Стоимость будет добавлена к финальной цене.</p>
+                </div>
+                <div class="gm-row">
+                    <label class="gm-label">Дополнительные пожелания
+                        <span class="gm-hint-icon" data-tooltip="Свободный текст: «больше документов», «избегать оружия» и т.п. Передаётся LLM.">?</span>
+                    </label>
+                    <textarea id="gm-ct-broll-extra" class="gm-input" rows="2" maxlength="300"
+                        placeholder="Например: больше архивных документов и работы за столом">${ctBrollExtra}</textarea>
+                </div>
+            </div>
+
+            <!-- ── Музыка ── -->
+            <div class="gm-row gm-row--2">
+                <div>
+                    <label class="gm-label">Фоновая музыка (URL)
+                        <span class="gm-hint-icon" data-tooltip="Прямая ссылка на mp3/wav. Оставьте пустым, чтобы не добавлять музыку.">?</span>
+                    </label>
+                    <input type="text" id="gm-ct-music" class="gm-input" value="${ctMusicUrl}"
+                        placeholder="https://...mp3">
+                </div>
+                <div>
+                    <label class="gm-label">Громкость музыки (%)
+                        <span class="gm-hint-icon" data-tooltip="10–40% — рекомендованный фон, не заглушает речь.">?</span>
+                    </label>
+                    <input type="number" id="gm-ct-music-vol" class="gm-input" value="${ctMusicVol}" min="0" max="100">
+                </div>
+            </div>
+
+            <!-- ── Intro/Outro ── -->
+            <div class="gm-row">
+                <label class="gm-label">Текст intro (опц.)
+                    <span class="gm-hint-icon" data-tooltip="Заставка в начале видео (2 с) с этим текстом.">?</span>
+                </label>
+                <input type="text" id="gm-ct-intro" class="gm-input" value="${ctIntroTxt}"
+                    placeholder="Например: АРМЕЙКА НЭТ">
+            </div>
+            <div class="gm-row">
+                <label class="gm-label">Текст outro (опц.)
+                    <span class="gm-hint-icon" data-tooltip="Финальная заставка (2.5 с) с CTA.">?</span>
+                </label>
+                <input type="text" id="gm-ct-outro" class="gm-input" value="${ctOutroTxt}"
+                    placeholder="Подписывайтесь и будьте свободны с Армейка Нэт">
+            </div>
+
+            <!-- ── Watermark ── -->
+            <div class="gm-row gm-row--2">
+                <div>
+                    <label class="gm-label">Логотип (URL)
+                        <span class="gm-hint-icon" data-tooltip="Постоянный водяной знак в углу. Прямая ссылка на PNG (с прозрачностью).">?</span>
+                    </label>
+                    <input type="text" id="gm-ct-wm" class="gm-input" value="${ctWatermark}"
+                        placeholder="https://...png">
+                </div>
+                <div>
+                    <label class="gm-label">Положение
+                        <span class="gm-hint-icon" data-tooltip="Угол экрана для логотипа.">?</span>
+                    </label>
+                    <select id="gm-ct-wm-pos" class="gm-select">
+                        <option value="top-right"    ${ctWmPos==='top-right'?'selected':''}>Сверху справа</option>
+                        <option value="top-left"     ${ctWmPos==='top-left'?'selected':''}>Сверху слева</option>
+                        <option value="bottom-right" ${ctWmPos==='bottom-right'?'selected':''}>Снизу справа</option>
+                        <option value="bottom-left"  ${ctWmPos==='bottom-left'?'selected':''}>Снизу слева</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- ── Цветокор ── -->
+            <div class="gm-row gm-row--2">
+                <div>
+                    <label class="gm-label">Цветокор
+                        <span class="gm-hint-icon" data-tooltip="Простой цветовой фильтр на исходное видео.">?</span>
+                    </label>
+                    <select id="gm-ct-color" class="gm-select">
+                        <option value=""           ${ctColor===''?'selected':''}>Без фильтра</option>
+                        <option value="brighten"   ${ctColor==='brighten'?'selected':''}>Brighten (ярче)</option>
+                        <option value="contrast"   ${ctColor==='contrast'?'selected':''}>Contrast (контраст)</option>
+                        <option value="grayscale"  ${ctColor==='grayscale'?'selected':''}>Grayscale (ч/б)</option>
+                        <option value="sepia"      ${ctColor==='sepia'?'selected':''}>Sepia (винтаж)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="gm-label">Интенсивность
+                        <span class="gm-hint-icon" data-tooltip="0% — без эффекта, 100% — максимум.">?</span>
+                    </label>
+                    <input type="text" id="gm-ct-color-val" class="gm-input" value="${ctColorVal}" placeholder="20%">
+                </div>
+            </div>
+        </div><!-- /gm-svc-creatomate -->
         `;
     }
 
@@ -1783,9 +2169,41 @@ function _collectModalParams(type) {
             avatar_style: g('gm-style-av')?.value || 'auto',
         };
     } else if (type === 'montage') {
+        const svcInput = document.querySelector('input[name="gm-sm-service"]:checked');
+        const service = svcInput?.value || 'submagic';
+
+        if (service === 'creatomate') {
+            return {
+                service: 'creatomate',
+                video_format:      g('gm-ct-format')?.value || '9:16',
+                fps:               parseInt(g('gm-ct-fps')?.value || '30'),
+                subtitle_preset:   g('gm-ct-sub-preset')?.value || 'hormozi_white',
+                transcript_effect: g('gm-ct-sub-effect')?.value || 'karaoke',
+                transcript_split:  g('gm-ct-sub-split')?.value || 'word',
+                music_url:         g('gm-ct-music')?.value || '',
+                music_volume_pct:  parseInt(g('gm-ct-music-vol')?.value || '25'),
+                broll_provider:    g('gm-ct-broll-prov')?.value || 'off',
+                broll_layout:      g('gm-ct-broll-layout')?.value || 'overlay',
+                broll_density:     g('gm-ct-broll-dens')?.value || 'medium',
+                broll_clip_duration: parseInt(g('gm-ct-broll-dur')?.value || '5'),
+                broll_topic:       g('gm-ct-broll-topic')?.value || 'auto',
+                broll_extra_prompt:g('gm-ct-broll-extra')?.value || '',
+                broll_llm_model:   g('gm-ct-broll-llm')?.value || 'gemini-flash-latest',
+                broll_russia_only: g('gm-ct-broll-ru')?.checked ?? true,
+                intro_text:        g('gm-ct-intro')?.value || '',
+                outro_text:        g('gm-ct-outro')?.value || '',
+                watermark_url:     g('gm-ct-wm')?.value || '',
+                watermark_position:g('gm-ct-wm-pos')?.value || 'top-right',
+                color_filter:      g('gm-ct-color')?.value || '',
+                color_filter_value:g('gm-ct-color-val')?.value || '20%',
+            };
+        }
+
+        // Submagic
         const modeInput = document.querySelector('input[name="gm-sm-mode"]:checked');
         const mode = modeInput?.value || 'auto';
         const common = {
+            service: 'submagic',
             mode,
             template_name: g('gm-sm-template')?.value || 'Hormozi 2',
             magic_zooms: g('gm-sm-zooms')?.checked ?? true,
@@ -1839,6 +2257,33 @@ function _saveModalParams(type, params) {
         if (params.avatar_style)  localStorage.setItem('avatarStyle',  params.avatar_style);
     }
     if (type === 'montage') {
+        localStorage.setItem('mtgService',     params.service || 'submagic');
+
+        if (params.service === 'creatomate') {
+            localStorage.setItem('ctFormat',      params.video_format || '9:16');
+            localStorage.setItem('ctFps',         String(params.fps || 30));
+            localStorage.setItem('ctSubPreset',   params.subtitle_preset || 'hormozi_white');
+            localStorage.setItem('ctSubEffect',   params.transcript_effect || 'karaoke');
+            localStorage.setItem('ctSubSplit',    params.transcript_split || 'word');
+            localStorage.setItem('ctMusicUrl',    params.music_url || '');
+            localStorage.setItem('ctMusicVol',    String(params.music_volume_pct || 25));
+            localStorage.setItem('ctIntroText',   params.intro_text || '');
+            localStorage.setItem('ctOutroText',   params.outro_text || '');
+            localStorage.setItem('ctWatermark',   params.watermark_url || '');
+            localStorage.setItem('ctWmPos',       params.watermark_position || 'top-right');
+            localStorage.setItem('ctColor',       params.color_filter || '');
+            localStorage.setItem('ctColorVal',    params.color_filter_value || '20%');
+            localStorage.setItem('ctBrollProv',   params.broll_provider || 'off');
+            localStorage.setItem('ctBrollLayout', params.broll_layout || 'overlay');
+            localStorage.setItem('ctBrollDens',   params.broll_density || 'medium');
+            localStorage.setItem('ctBrollDur',    String(params.broll_clip_duration || 5));
+            localStorage.setItem('ctBrollTopic',  params.broll_topic || 'auto');
+            localStorage.setItem('ctBrollExtra',  params.broll_extra_prompt || '');
+            localStorage.setItem('ctBrollLlm',    params.broll_llm_model || 'gemini-flash-latest');
+            localStorage.setItem('ctBrollRu',     params.broll_russia_only ? 'true' : 'false');
+            return;
+        }
+
         localStorage.setItem('smMode',         params.mode || 'auto');
         localStorage.setItem('smTemplate',     params.template_name || 'Hormozi 2');
         localStorage.setItem('smZooms',        params.magic_zooms ? 'true' : 'false');
@@ -1918,6 +2363,10 @@ ResultTree.prototype.generateNode = async function(parentNodeId, targetType, par
                 if (n) { n.status = 'failed'; this.updateNode(n); }
                 alert('Ошибка генерации: ' + evt.message);
                 es.close();
+            } else if (evt.warning) {
+                // Нефатальное предупреждение (напр. B-roll не получен)
+                console.warn('Tree warning:', evt.warning);
+                this._showWarningToast(evt.warning);
             }
             // Промежуточные step-события (статус) можно использовать для обновления спиннера
         } catch (err) { /* ignore parse errors */ }
