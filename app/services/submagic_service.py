@@ -129,3 +129,66 @@ async def get_templates() -> list[str]:
         ) as resp:
             data = await resp.json()
             return data.get("templates", [])
+
+
+async def upload_user_media(url: str) -> str:
+    """Upload a public video/image URL to the Submagic media library.
+
+    Returns userMediaId (UUID) to reference in project items.
+    Submagic fetches and processes the URL asynchronously — call
+    wait_for_user_media() before using the ID in a project.
+    """
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{BASE_URL}/user-media", headers=_headers(), json={"url": url}
+        ) as resp:
+            data = await resp.json()
+            if resp.status not in (200, 201):
+                error_msg = data.get("message") or data.get("error") or str(data)
+                raise Exception(f"Submagic upload_user_media error ({resp.status}): {error_msg}")
+            media_id = data.get("userMediaId")
+            if not media_id:
+                raise Exception(f"Submagic upload_user_media: нет userMediaId в ответе: {data}")
+            logger.info(f"Submagic user media uploaded: id={media_id}")
+            return media_id
+
+
+async def list_user_media(media_type: str = "VIDEO", limit: int = 50) -> list[dict]:
+    """Fetch user media list (single page). Returns items array."""
+    params = {"type": media_type, "limit": limit}
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            f"{BASE_URL}/user-media", headers=_headers(), params=params
+        ) as resp:
+            data = await resp.json()
+            if resp.status != 200:
+                error_msg = data.get("message") or data.get("error") or str(data)
+                raise Exception(f"Submagic list_user_media error ({resp.status}): {error_msg}")
+            return data.get("items", [])
+
+
+async def wait_for_user_media(
+    media_id: str,
+    max_wait_sec: int = 120,
+    poll_interval: int = 5,
+) -> bool:
+    """Poll until the uploaded media appears in the library (ready to use).
+
+    Returns True if ready, False if timeout reached.
+    Submagic downloads and processes the URL asynchronously — we need to wait
+    until the media ID appears in the list before referencing it in a project.
+    """
+    import asyncio
+    elapsed = 0
+    while elapsed < max_wait_sec:
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+        try:
+            items = await list_user_media()
+            if any(item.get("id") == media_id for item in items):
+                logger.info(f"Submagic user media ready: id={media_id} (после {elapsed}с)")
+                return True
+        except Exception as e:
+            logger.warning(f"Submagic wait_for_user_media poll error: {e}")
+    logger.warning(f"Submagic user media timeout: id={media_id} не появился за {max_wait_sec}с")
+    return False

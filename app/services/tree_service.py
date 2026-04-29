@@ -546,23 +546,154 @@ async def _run_submagic_montage(*, queue, slug, title, video_url, parent, parent
         except FileNotFoundError:
             raise Exception(f"Файл таймкодов не найден: {tc_url}")
 
-        try:
-            smart_items, smart_stats = await plan_broll_items(
-                deepgram_json,
-                density=params.get("density", "medium"),
-                clip_duration=int(params.get("clip_duration", 5)),
-                topic_hint=params.get("topic_hint", "auto"),
-                layout=params.get("layout", "cover"),
-                extra_prompt=params.get("extra_prompt", ""),
-                llm_model=params.get("llm_model", "gemini-flash-latest"),
-                russia_only=bool(params.get("russia_only", True)),
+        broll_source = (params.get("broll_source") or "ai").lower()
+        _EXTERNAL_PROVIDERS = {"pexels", "pixabay", "pexels_pixabay", "veo", "runway"}
+
+        if broll_source in _EXTERNAL_PROVIDERS:
+            # ── Внешний B-roll: Pexels / Pixabay / Veo / Runway ──────────────
+            # Шаг 1: планировщик генерирует временны́е слоты + запросы/промпты
+            from app.services.broll_planner import plan_broll_for_creatomate
+            from app.services.broll_providers import get_provider
+            from app.services.broll_providers.base import ProviderError
+
+            try:
+                broll_plan, planner_stats = await plan_broll_for_creatomate(
+                    deepgram_json,
+                    density=params.get("density", "medium"),
+                    clip_duration=int(params.get("clip_duration", 5)),
+                    topic_hint=params.get("topic_hint", "auto"),
+                    extra_prompt=params.get("extra_prompt", ""),
+                    llm_model=params.get("llm_model", "gemini-flash-latest"),
+                    russia_only=bool(params.get("russia_only", True)),
+                    provider_kind=("ai" if broll_source in {"veo", "runway"} else "stock"),
+                )
+            except Exception as bpe:
+                raise Exception(f"Smart-планировщик (ext): {bpe}")
+
+            await queue.put({
+                "step": 6,
+                "message": f"Поиск/генерация {len(broll_plan)} B-roll клипов через {broll_source}..."
+            })
+
+            provider = get_provider(broll_source)
+            parent_video_format = parent_stats.get("video_format", "9:16")
+            orientation = (
+                "portrait" if parent_video_format in ("9:16", "4:5")
+                else ("square" if parent_video_format == "1:1" else "landscape")
             )
-        except BrollPlannerError as bpe:
-            raise Exception(f"Smart-планировщик: {bpe}")
+            concurrency = 1 if provider.kind == "ai" else 3
+            sem = asyncio.Semaphore(concurrency)
+            fetch_errors: list[str] = []
+
+            async def _fetch_ext(item: dict) -> dict | None:
+                async with sem:
+                    query = item.get("query_en") if provider.kind == "stock" else item.get("prompt")
+                    if not query:
+                        return None
+                    try:
+                        clip = await provider.search(query, duration_sec=item["duration"], orientation=orientation)
+                    except ProviderError as pe:
+                        fetch_errors.append(str(pe)[:120])
+                        logger.warning(f"Provider {provider.name} failed: {pe}")
+                        return None
+                    if not clip:
+                        return None
+                    return {"url": clip["url"], "start": item["start"], "duration": item["duration"]}
+
+            raw_clips = await asyncio.gather(*(_fetch_ext(it) for it in broll_plan))
+            ext_clips = [c for c in raw_clips if c]
+
+            if not ext_clips:
+                first_err = fetch_errors[0] if fetch_errors else "провайдер не вернул результатов"
+                await queue.put({"step": 6, "warning": (
+                    f"⚠️ B-roll от {broll_source} не получен: {first_err}. "
+                    "Монтаж будет создан без B-roll вставок."
+                )})
+            else:
+                # Шаг 2: загружаем каждый клип в Submagic User Media Library
+                await queue.put({
+                    "step": 6,
+                    "message": f"Загрузка {len(ext_clips)} клипов в Submagic Media Library..."
+                })
+                layout_raw = params.get("layout", "cover")
+                # Submagic pip-значение: "pip" → "pip-bottom-right"
+                layout_sm = (
+                    "pip-bottom-right" if layout_raw == "pip"
+                    else layout_raw
+                )
+
+                upload_tasks = [submagic_service.upload_user_media(c["url"]) for c in ext_clips]
+                media_ids = await asyncio.gather(*upload_tasks, return_exceptions=True)
+
+                # Шаг 3: ждём пока медиа будут готовы (Submagic загружает их асинхронно)
+                await queue.put({"step": 6, "message": "Ожидание обработки медиа в Submagic..."})
+                valid_ids = []
+                for mid in media_ids:
+                    if isinstance(mid, Exception):
+                        logger.warning(f"upload_user_media error: {mid}")
+                        fetch_errors.append(str(mid)[:80])
+                        continue
+                    valid_ids.append(mid)
+
+                ready_ids = []
+                for mid in valid_ids:
+                    ok = await submagic_service.wait_for_user_media(mid, max_wait_sec=90)
+                    if ok:
+                        ready_ids.append(mid)
+                    else:
+                        logger.warning(f"Submagic: media {mid} не готово за 90 с, пропускаем")
+
+                # Шаг 4: строим items[] для Submagic в формате user-media
+                if ready_ids:
+                    smart_items = []
+                    id_iter = iter(ready_ids)
+                    for clip in ext_clips:
+                        try:
+                            mid = next(id_iter)
+                        except StopIteration:
+                            break
+                        smart_items.append({
+                            "type": "user-media",
+                            "startTime": round(clip["start"], 2),
+                            "endTime":   round(clip["start"] + clip["duration"], 2),
+                            "userMediaId": mid,
+                            "layout": layout_sm,
+                        })
+                    logger.info(f"Submagic ext B-roll: {len(smart_items)} user-media items готово")
+                    smart_stats = {
+                        "broll_source": broll_source,
+                        "planned": len(broll_plan),
+                        "fetched": len(ext_clips),
+                        "uploaded": len(ready_ids),
+                        "items": len(smart_items),
+                        "planner_cost_usd": planner_stats.get("cost", 0.0),
+                    }
+                else:
+                    await queue.put({"step": 6, "warning": (
+                        "⚠️ Все B-roll клипы не прошли обработку в Submagic. "
+                        "Монтаж будет создан без B-roll вставок."
+                    )})
+
+        else:
+            # ── Встроенный AI B-roll Submagic (тип: ai-broll) ────────────────
+            try:
+                smart_items, smart_stats = await plan_broll_items(
+                    deepgram_json,
+                    density=params.get("density", "medium"),
+                    clip_duration=int(params.get("clip_duration", 5)),
+                    topic_hint=params.get("topic_hint", "auto"),
+                    layout=params.get("layout", "cover"),
+                    extra_prompt=params.get("extra_prompt", ""),
+                    llm_model=params.get("llm_model", "gemini-flash-latest"),
+                    russia_only=bool(params.get("russia_only", True)),
+                )
+            except BrollPlannerError as bpe:
+                raise Exception(f"Smart-планировщик: {bpe}")
 
         logger.info(
-            f"Smart broll: {len(smart_items)} items, video={smart_stats.get('video_duration_sec')}s, "
-            f"llm_cost=${smart_stats.get('cost', 0):.5f}"
+            f"Smart broll ({broll_source}): {len(smart_items or [])} items, "
+            f"video={smart_stats.get('video_duration_sec')}s, "
+            f"llm_cost=${smart_stats.get('cost', smart_stats.get('planner_cost_usd', 0)):.5f}"
         )
 
     dictionary = params.get("dictionary") or ["Армейка Нэт", "ArmeykaBrain", "Armeykanet"]
@@ -658,19 +789,24 @@ async def _run_submagic_montage(*, queue, slug, title, video_url, parent, parent
         "status": "completed",
     }
     if mode == "smart":
+        broll_source_val = params.get("broll_source", "ai")
         stats.update({
+            "broll_source": broll_source_val,
             "density": params.get("density", "medium"),
             "clip_duration": int(params.get("clip_duration", 5)),
             "topic_hint": params.get("topic_hint", "auto"),
             "layout": params.get("layout", "cover"),
             "russia_only": bool(params.get("russia_only", True)),
             "extra_prompt": (params.get("extra_prompt") or "")[:300],
-            "broll_items_count": smart_stats.get("broll_items_count", len(smart_items or [])),
+            "broll_items_count": smart_stats.get("items", smart_stats.get("broll_items_count", len(smart_items or []))),
             "broll_llm_model": smart_stats.get("llm_model"),
             "broll_llm_in_tokens": smart_stats.get("in_tokens", 0),
             "broll_llm_out_tokens": smart_stats.get("out_tokens", 0),
-            "broll_llm_cost": smart_stats.get("cost", 0.0),
-            "total_cost": round(submagic_cost + float(smart_stats.get("cost", 0.0)), 6),
+            "broll_llm_cost": smart_stats.get("cost", smart_stats.get("planner_cost_usd", 0.0)),
+            "total_cost": round(
+                submagic_cost + float(smart_stats.get("cost", smart_stats.get("planner_cost_usd", 0.0))),
+                6,
+            ),
         })
 
     return stats, download_url

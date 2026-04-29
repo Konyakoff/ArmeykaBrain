@@ -1303,6 +1303,12 @@ function _buildTags(node, nodesMap) {
             const mode = p.mode || st.mode || 'auto';
             if (mode === 'smart') {
                 parts.push('Smart');
+                const brollSrc = p.broll_source || st.broll_source || 'ai';
+                const brollSrcLabel = {
+                    ai: 'AI', pexels: 'Pexels', pixabay: 'Pixabay',
+                    pexels_pixabay: 'Pexels+Pixabay', veo: 'Veo', runway: 'Runway',
+                };
+                parts.push(`B-roll: ${brollSrcLabel[brollSrc] || brollSrc}`);
                 const density = p.density || st.density;
                 if (density) {
                     const ru = { low: 'низкая', medium: 'средняя', high: 'высокая', very_high: 'очень высокая' };
@@ -1317,7 +1323,7 @@ function _buildTags(node, nodesMap) {
                     parts.push(`тема: ${ruTopic[topic] || topic}`);
                 }
                 const cnt = st.broll_items_count;
-                if (cnt) parts.push(`B-roll: ${cnt}`);
+                if (cnt) parts.push(`${cnt} вставок`);
                 const clipDur = p.clip_duration || st.clip_duration;
                 if (clipDur) parts.push(`${clipDur}с/вставка`);
                 const russiaOnly = (p.russia_only ?? st.russia_only);
@@ -1451,6 +1457,16 @@ function _onSmServiceChange(svc) {
         const inp = el.querySelector('input[type="radio"]');
         el.classList.toggle('is-active', inp && inp.value === svc);
     });
+}
+
+function _onSmBrollSrcChange(src) {
+    // Когда источник — не встроенный AI Submagic, clip_duration ограничен 8c (Veo) или 10c (Pexels)
+    const clipDurSel = document.getElementById('gm-sm-clip-dur');
+    if (!clipDurSel) return;
+    if (src === 'veo') {
+        // Veo генерирует ровно 8c — зафиксируем ближайший вариант
+        clipDurSel.value = '7';
+    }
 }
 
 function _onCtBrollProviderChange(prov) {
@@ -1641,13 +1657,14 @@ function _buildModalForm(type) {
         const savedBadTakes = _ls('smBadTakes', 'false') === 'true';
         const savedClean    = _ls('smCleanAudio', 'false') === 'true';
 
-        const savedDensity   = _ls('smSmartDensity', 'medium');
-        const savedClipDur   = _ls('smSmartClipDur', '5');
-        const savedTopic     = _ls('smSmartTopic', 'auto');
-        const savedLayout    = _ls('smSmartLayout', 'cover');
-        const savedRussia    = _ls('smSmartRussia', 'true') === 'true';
-        const savedExtra     = _ls('smSmartExtra', '');
-        const savedLlm       = _ls('smSmartLlm', 'gemini-flash-latest');
+        const savedDensity    = _ls('smSmartDensity', 'medium');
+        const savedClipDur    = _ls('smSmartClipDur', '5');
+        const savedTopic      = _ls('smSmartTopic', 'auto');
+        const savedLayout     = _ls('smSmartLayout', 'cover');
+        const savedRussia     = _ls('smSmartRussia', 'true') === 'true';
+        const savedExtra      = _ls('smSmartExtra', '');
+        const savedLlm        = _ls('smSmartLlm', 'gemini-flash-latest');
+        const savedBrollSrc   = _ls('smSmartBrollSrc', 'ai');
 
         const templateList = _submagicTemplates.length > 0 ? _submagicTemplates : [
             'Hormozi 2','Hormozi 1','Hormozi 3','Hormozi 4','Hormozi 5',
@@ -1772,6 +1789,20 @@ function _buildModalForm(type) {
 
         <!-- ───────── SMART-only fields ───────── -->
         <div id="gm-sm-smart-fields" style="display:${isSmart ? '' : 'none'}">
+            <div class="gm-row">
+                <label class="gm-label">Источник B-roll
+                    <span class="gm-hint-icon" data-tooltip="AI — Submagic генерирует B-roll сам (3 кредита/вставка). Pexels/Pixabay — стоковые видео (бесплатно). Veo/Runway — ИИ-генерация (требует API-ключ и кредиты).">?</span>
+                </label>
+                <select id="gm-sm-broll-src" class="gm-select"
+                    onchange="_onSmBrollSrcChange(this.value)">
+                    <option value="ai"            ${savedBrollSrc==='ai'?'selected':''}>AI Submagic (встроенный)</option>
+                    <option value="pexels"        ${savedBrollSrc==='pexels'?'selected':''}>Pexels (сток, бесплатно)</option>
+                    <option value="pixabay"       ${savedBrollSrc==='pixabay'?'selected':''}>Pixabay (сток, бесплатно)</option>
+                    <option value="pexels_pixabay" ${savedBrollSrc==='pexels_pixabay'?'selected':''}>Pexels + Pixabay (каскад)</option>
+                    <option value="veo"           ${savedBrollSrc==='veo'?'selected':''}>Google Veo (ИИ-генерация)</option>
+                    <option value="runway"        ${savedBrollSrc==='runway'?'selected':''}>Runway (ИИ-генерация)</option>
+                </select>
+            </div>
             <div class="gm-row gm-row--2">
                 <div>
                     <label class="gm-label">Плотность B-roll
@@ -2216,6 +2247,7 @@ function _collectModalParams(type) {
                 ...common,
                 magic_brolls: false,
                 magic_brolls_pct: 0,
+                broll_source:  g('gm-sm-broll-src')?.value || 'ai',
                 density:       g('gm-sm-density')?.value || 'medium',
                 clip_duration: parseInt(g('gm-sm-clip-dur')?.value || '5'),
                 topic_hint:    g('gm-sm-topic')?.value || 'auto',
@@ -2293,6 +2325,7 @@ function _saveModalParams(type, params) {
         localStorage.setItem('smBadTakes',     params.remove_bad_takes ? 'true' : 'false');
         localStorage.setItem('smCleanAudio',   params.clean_audio ? 'true' : 'false');
         if (params.mode === 'smart') {
+            localStorage.setItem('smSmartBrollSrc', params.broll_source || 'ai');
             localStorage.setItem('smSmartDensity', params.density || 'medium');
             localStorage.setItem('smSmartClipDur', String(params.clip_duration || 5));
             localStorage.setItem('smSmartTopic',   params.topic_hint || 'auto');
