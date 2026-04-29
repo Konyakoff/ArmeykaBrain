@@ -24,6 +24,11 @@ os.environ.setdefault("HEYGEN_API_KEY", "test-heygen")
 os.environ.setdefault("DEEPGRAM_API_KEY", "test-deepgram")
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-claude")
 os.environ.setdefault("SUBMAGIC_API_KEY", "test-submagic")
+os.environ.setdefault("CREATOMATE_API_KEY", "test-creatomate")
+os.environ.setdefault("PEXELS_API_KEY", "test-pexels")
+os.environ.setdefault("PIXABAY_API_KEY", "test-pixabay")
+os.environ.setdefault("RUNWAY_API_KEY", "test-runway")
+os.environ.setdefault("LUMA_API_KEY", "test-luma")
 
 # Корень проекта в sys.path (на случай запуска не из корня)
 ROOT = pathlib.Path(__file__).resolve().parent.parent

@@ -117,12 +117,24 @@ async def _fetch_heygen_avatars_from_api() -> list:
                 if resp.status == 200:
                     data = await resp.json()
                     avatars = []
+                    seen_ids: set[str] = set()
                     for avatar in data.get("data", {}).get("avatars", []):
                         name = avatar.get("avatar_name", "")
                         gender = avatar.get("gender", "")
-                        
+                        aid = avatar.get("avatar_id", "")
+
+                        # Личные аватары имеют gender='unknown' — пропускаем здесь,
+                        # они добавляются в приватный список через _fetch_heygen_private_avatars_from_api
+                        if gender == "unknown" or gender is None:
+                            continue
+
+                        # Дедупликация (API иногда возвращает аватары дважды)
+                        if aid in seen_ids:
+                            continue
+                        seen_ids.add(aid)
+
                         name_lower = name.lower()
-                        id_lower = avatar.get("avatar_id", "").lower()
+                        id_lower = aid.lower()
                         combined = name_lower + " " + id_lower
                         
                         # Все аватары подходят для горизонтального и квадратного форматов.
@@ -154,11 +166,11 @@ async def _fetch_heygen_avatars_from_api() -> list:
                             is_vertical = True
                         
                         avatars.append({
-                            "avatar_id": avatar.get("avatar_id"),
+                            "avatar_id": aid,
                             "avatar_name": translate_avatar_name(name, gender),
                             "gender": gender,
                             "_original_image_url": avatar.get("preview_image_url"),
-                            "preview_image_url": f"/api/avatar-preview/{avatar.get('avatar_id')}",
+                            "preview_image_url": f"/api/avatar-preview/{aid}",
                             "preview_video_url": "",
                             "is_horizontal_friendly": is_horizontal,
                             "is_vertical_friendly": is_vertical,
@@ -236,25 +248,35 @@ async def get_heygen_private_avatars() -> list:
 
 
 async def _fetch_heygen_private_avatars_from_api() -> list:
-    """Загружает свежие личные аватары из HeyGen API. Используется только при явном обновлении."""
-    avatars = []
+    """Загружает личные аватары пользователя из HeyGen API.
+
+    Источник: /v2/avatars с фильтром gender='unknown'.
+    Все публичные аватары HeyGen имеют gender 'female' или 'male'.
+    Аватары с gender='unknown' — всегда созданы самим пользователем
+    (Instant Avatars, Studio Avatars и т.п.).
+    """
+    avatars: list[dict] = []
+    seen_ids: set[str] = set()
     timeout = aiohttp.ClientTimeout(total=20)
+
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            # Talking photos (портретные ИИ-аватары)
-            async with session.get(
-                f"{HEYGEN_API_URL}/v1/talking_photo.list",
-                headers=HEADERS
-            ) as resp:
+            async with session.get(f"{HEYGEN_API_URL}/v2/avatars", headers=HEADERS) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    for item in data.get("data", {}).get("talking_photos", []):
-                        aid = item.get("id") or item.get("talking_photo_id", "")
-                        name = item.get("name") or item.get("talking_photo_name") or aid[:12]
-                        preview = item.get("preview_image_url") or item.get("image_url") or ""
+                    for item in data.get("data", {}).get("avatars", []):
+                        aid = item.get("avatar_id", "")
+                        if not aid or aid in seen_ids:
+                            continue
+                        gender = item.get("gender", "")
+                        if gender not in ("unknown", None, ""):
+                            continue  # публичные аватары HeyGen имеют gender female/male
+                        seen_ids.add(aid)
+                        name = item.get("avatar_name") or aid[:12]
+                        preview = item.get("preview_image_url") or ""
                         avatars.append({
                             "avatar_id": aid,
-                            "avatar_name": f"{name} (личный)",
+                            "avatar_name": name,
                             "gender": "unknown",
                             "_original_image_url": preview,
                             "preview_image_url": f"/api/avatar-preview/{aid}",
@@ -263,14 +285,17 @@ async def _fetch_heygen_private_avatars_from_api() -> list:
                             "is_square_friendly": True,
                             "is_private": True,
                         })
+                    logger.info(f"HeyGen private avatars from /v2/avatars: {len(avatars)}")
+                else:
+                    logger.error(f"HeyGen /v2/avatars error {resp.status}: {await resp.text()}")
     except Exception as e:
-        logger.error(f"HeyGen get_private_avatars error: {e}")
+        logger.error(f"HeyGen _fetch_heygen_private_avatars_from_api error: {e}")
 
-    # Всегда добавляем хардкод-аватары если их нет в API-ответе
-    existing_ids = {a["avatar_id"] for a in avatars}
+    # Фоллбэк: добавляем хардкод-аватары если API не вернул их
     for ka in KNOWN_PRIVATE_AVATARS:
-        if ka["avatar_id"] not in existing_ids:
+        if ka["avatar_id"] not in seen_ids:
             avatars.append(ka)
+            seen_ids.add(ka["avatar_id"])
 
     global _private_avatars_cache
     _private_avatars_cache = avatars

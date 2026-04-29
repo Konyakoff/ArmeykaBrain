@@ -31,7 +31,7 @@ logger = logging.getLogger("broll_planner")
 
 # ──────────────────────────── параметры алгоритма ────────────────────────────
 
-DENSITY_DIVIDER = {"low": 30.0, "medium": 15.0, "high": 9.0}
+DENSITY_DIVIDER = {"low": 30.0, "medium": 15.0, "high": 9.0, "very_high": 6.0}
 
 SEG_MIN_LEN = 3.0          # минимальная длина одной B-roll вставки (сек)
 SEG_MAX_LEN = 10.0         # абсолютный максимум; Submagic-ограничение — 12 сек
@@ -425,3 +425,228 @@ def _gemini_cost(model_name: str, in_tokens: int, out_tokens: int) -> float:
         return float(in_c) + float(out_c)
     except Exception:
         return 0.0
+
+
+# ─────────────────────────── Creatomate planner ──────────────────────────────
+#
+# Отличие от Submagic-варианта (plan_broll_items):
+#  - не возвращаем готовые items для API, возвращаем "план" — список объектов
+#    {start, end, duration, query_ru, query_en, prompt, text}.
+#  - LLM генерирует ОДНОВРЕМЕННО:
+#       query_ru — короткий русский запрос для логирования и тематической оценки
+#       query_en — короткий английский запрос для стоковых сервисов (Pexels/Pixabay)
+#       prompt   — развёрнутый английский визуальный промпт для AI-генераторов
+#                  (Veo/Runway/Luma) с cinematic-инструкциями
+#  - Caller сам выбирает provider_kind ('stock'/'ai') и какой ключ использовать.
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def plan_broll_for_creatomate(
+    deepgram_json: dict,
+    *,
+    density: str = "medium",
+    clip_duration: int = CLIP_DURATION_DEFAULT,
+    topic_hint: str = "auto",
+    extra_prompt: str = "",
+    llm_model: str = "gemini-flash-latest",
+    russia_only: bool = True,
+    provider_kind: str = "stock",   # 'stock' или 'ai' — влияет на детальность промпта
+) -> tuple[list[dict], dict]:
+    """Возвращает (plan, stats).
+
+    plan — список словарей: {start, end, duration, text, query_ru, query_en, prompt}
+    stats — { llm_model, in_tokens, out_tokens, cost, planned_count, video_duration_sec }
+    """
+    if density not in DENSITY_DIVIDER:
+        density = "medium"
+    clip_duration = max(CLIP_DURATION_MIN, min(CLIP_DURATION_MAX, int(clip_duration)))
+
+    raw_segments = _extract_segments(deepgram_json)
+    if not raw_segments:
+        raise BrollPlannerError("Deepgram JSON не содержит распознанных сегментов")
+
+    total = raw_segments[-1].end
+    if total < MIN_VIDEO_DURATION:
+        raise BrollPlannerError(
+            f"Длительность видео {total:.1f}с меньше {MIN_VIDEO_DURATION:.0f}с — B-roll не применим"
+        )
+
+    target_count = max(1, round(total / DENSITY_DIVIDER[density]))
+    picked = _pick_segments(raw_segments, target_count, total, max_clip_sec=clip_duration)
+    if not picked:
+        raise BrollPlannerError("Не удалось подобрать сегменты для B-roll")
+
+    queries, llm_stats = await _generate_creatomate_queries(
+        picked,
+        topic_hint=topic_hint,
+        extra_prompt=extra_prompt,
+        llm_model=llm_model,
+        russia_only=russia_only,
+        provider_kind=provider_kind,
+    )
+
+    plan: list[dict] = []
+    for seg, q in zip(picked, queries):
+        if not q:
+            continue
+        plan.append({
+            "start": round(seg.start, 2),
+            "end": round(seg.end, 2),
+            "duration": round(seg.duration, 2),
+            "text": seg.text,
+            "query_ru": (q.get("query_ru") or "").strip()[:200],
+            "query_en": (q.get("query_en") or "").strip()[:200],
+            "prompt":   (q.get("prompt")   or "").strip()[:PROMPT_MAX_LEN],
+        })
+
+    plan.sort(key=lambda x: x["start"])
+    stats = {
+        "planned_count": len(plan),
+        "video_duration_sec": round(total, 2),
+        "clip_duration": clip_duration,
+        "llm_model": llm_stats.get("model", llm_model),
+        "in_tokens": llm_stats.get("in_tokens", 0),
+        "out_tokens": llm_stats.get("out_tokens", 0),
+        "cost": round(llm_stats.get("cost", 0.0), 6),
+    }
+    return plan, stats
+
+
+async def _generate_creatomate_queries(
+    segs: list[_Segment],
+    *,
+    topic_hint: str,
+    extra_prompt: str,
+    llm_model: str,
+    russia_only: bool,
+    provider_kind: str,
+) -> tuple[list[dict], dict]:
+    """Возвращает (queries, llm_stats), где queries — list of {query_ru, query_en, prompt}."""
+    if not segs:
+        return [], {"model": llm_model, "in_tokens": 0, "out_tokens": 0, "cost": 0.0}
+
+    topic_label = TOPIC_LABELS.get(topic_hint, TOPIC_LABELS["auto"])
+    russia_clause = (
+        "STRICT RULE: do not depict flags, military uniforms, license plates or "
+        "written signs of foreign countries. Russian symbolism is allowed only "
+        "when explicitly justified. Prefer neutral footage (documents, hands, "
+        "archives, generic offices, Russian nature, courtyards, urban scenes)."
+    ) if russia_only else (
+        "Prefer culturally neutral footage; avoid politically charged imagery."
+    )
+    extra_clause = f"\nUser extra notes: {extra_prompt.strip()[:300]}" if extra_prompt else ""
+
+    items_input = [
+        {"index": i, "start": round(s.start, 2), "end": round(s.end, 2), "text": s.text}
+        for i, s in enumerate(segs)
+    ]
+
+    prompt_detail = (
+        "For each segment produce three values:\n"
+        "  query_ru — короткий запрос на русском (3–6 слов), описывает предмет кадра.\n"
+        "  query_en — short English search query (3–6 words) for stock video sites "
+        "(Pexels/Pixabay). Use universal English nouns, no proper names of countries.\n"
+        "  prompt   — detailed English visual prompt (60–120 words) for AI video "
+        "generators (Veo/Runway/Luma). Cinematic, photorealistic, describe subject, "
+        "framing, lighting, mood. NO foreign flags or symbols."
+    ) if provider_kind == "ai" else (
+        "For each segment produce three values:\n"
+        "  query_ru — короткий запрос на русском (3–6 слов).\n"
+        "  query_en — short English search query (2–5 words) for Pexels/Pixabay. "
+        "Use universal English nouns. Avoid proper country names.\n"
+        "  prompt   — short English description (1–2 sentences), cinematic style."
+    )
+
+    system_prompt = (
+        "Ты режиссёр короткого видео для русскоязычной юридической аудитории "
+        f"(тема: {topic_label}).\n\n"
+        f"{prompt_detail}\n\n"
+        f"{russia_clause}{extra_clause}\n\n"
+        "Запрещено: американские/европейские флаги и символика, лица западных "
+        "политиков, иностранная военная форма, NATO/EU/USA-айдентика.\n\n"
+        "Верни ТОЛЬКО JSON-массив вида: "
+        '[{"index":0,"query_ru":"...","query_en":"...","prompt":"..."}, ...]. '
+        "Никаких пояснений вне JSON."
+    )
+    user_payload = json.dumps({"segments": items_input}, ensure_ascii=False)
+
+    effective_model = llm_model
+    if (effective_model or "").startswith("claude-"):
+        effective_model = "gemini-flash-latest"
+
+    try:
+        rows, in_tokens, out_tokens = await _call_gemini_json_rows(
+            effective_model, system_prompt, user_payload
+        )
+    except Exception as e:
+        logger.error(f"creatomate planner LLM error: {e}; using neutral fallback")
+        fb = {
+            "query_ru": "документы делопроизводство",
+            "query_en": "office documents paperwork",
+            "prompt": "Cinematic close-up of hands flipping through legal documents on a wooden desk, "
+                      "warm tungsten light, shallow depth of field, photorealistic.",
+        }
+        return [fb] * len(segs), {"model": effective_model, "in_tokens": 0, "out_tokens": 0, "cost": 0.0}
+
+    queries: list[dict] = []
+    for i, _ in enumerate(segs):
+        row = rows.get(i) or {}
+        queries.append({
+            "query_ru": row.get("query_ru", "") or "документы юристы",
+            "query_en": row.get("query_en", "") or "office documents",
+            "prompt":   row.get("prompt", "")   or "Cinematic close-up of legal documents",
+        })
+
+    cost = _gemini_cost(effective_model, in_tokens, out_tokens)
+    return queries, {
+        "model": effective_model,
+        "in_tokens": in_tokens,
+        "out_tokens": out_tokens,
+        "cost": cost,
+    }
+
+
+async def _call_gemini_json_rows(model_name: str, system: str, user: str) -> tuple[dict[int, dict], int, int]:
+    """Аналогично _call_gemini_json, но возвращает целые dict-строки по индексу."""
+    if not getattr(settings, "gemini_api_key", ""):
+        raise RuntimeError("GEMINI_API_KEY не установлен")
+    import google.generativeai as genai
+    genai.configure(api_key=settings.gemini_api_key)
+
+    model = genai.GenerativeModel(model_name, system_instruction=system)
+    response = await model.generate_content_async(
+        user,
+        generation_config=genai.types.GenerationConfig(
+            response_mime_type="application/json",
+            temperature=0.6,
+        ),
+    )
+
+    text = (getattr(response, "text", "") or "").strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\[.*\]", text, flags=re.S)
+        data = json.loads(match.group(0)) if match else []
+
+    if isinstance(data, dict):
+        data = data.get("items") or data.get("rows") or data.get("segments") or []
+
+    out: dict[int, dict] = {}
+    if isinstance(data, list):
+        for row in data:
+            if not isinstance(row, dict):
+                continue
+            idx = row.get("index")
+            if isinstance(idx, int):
+                out[idx] = {
+                    "query_ru": str(row.get("query_ru") or "").strip(),
+                    "query_en": str(row.get("query_en") or "").strip(),
+                    "prompt":   str(row.get("prompt")   or "").strip(),
+                }
+
+    usage = getattr(response, "usage_metadata", None)
+    in_tokens = getattr(usage, "prompt_token_count", 0) or 0
+    out_tokens = getattr(usage, "candidates_token_count", 0) or 0
+    return out, int(in_tokens), int(out_tokens)

@@ -38,7 +38,7 @@ OPS_URL       = "https://generativelanguage.googleapis.com/v1beta/{name}"
 DOWNLOAD_BASE = "https://generativelanguage.googleapis.com"
 
 # Модели в порядке предпочтения: пробуем последнюю, при 404/400 — fallback
-VEO_MODELS = ["veo-3.1-generate-001", "veo-3.0-generate-001"]
+VEO_MODELS = ["veo-3.1-generate-preview", "veo-3.0-generate-001"]
 VEO_COST_USD = 0.50  # ~оценка за 8-секундный клип
 
 # Куда сохранять скачанные видео
@@ -87,10 +87,11 @@ class VeoProvider:
                 op_name = await self._submit(model, query, aspect_ratio)
             except ProviderError as e:
                 last_error = e
-                # 404 / 400 → следующая модель
-                if "404" in str(e) or "400" in str(e) or "not found" in str(e).lower():
+                # 404 -> fallback to next model
+                if "404" in str(e) or "not found" in str(e).lower():
                     logger.warning(f"Veo model {model} недоступна, пробуем следующую: {e}")
                     continue
+                # For 400 or other errors, raise immediately (e.g. rate limits or bad params)
                 raise
             break
         else:
@@ -128,7 +129,6 @@ class VeoProvider:
             "instances": [{"prompt": prompt}],
             "parameters": {
                 "aspectRatio":       aspect_ratio,
-                "personGeneration":  "allow_adult",
                 "durationSeconds":   8,
             },
         }
@@ -194,8 +194,15 @@ class VeoProvider:
     @staticmethod
     def _extract_uri(response: dict) -> Optional[str]:
         """Пробуем несколько возможных путей в ответе API."""
+        
+        # Разворачиваем вложенные структуры
+        if "generateVideoResponse" in response:
+            response = response["generateVideoResponse"]
+        elif "predictResponse" in response:
+            response = response["predictResponse"]
+            
         # Путь 1: response.generatedVideos[0].video.uri  (основной)
-        for key in ("generatedVideos", "generated_videos", "videos"):
+        for key in ("generatedSamples", "generatedVideos", "generated_videos", "videos"):
             videos = response.get(key) or []
             if videos:
                 first = videos[0]

@@ -1417,6 +1417,14 @@ function openGenerateModal(parentNodeId, targetType) {
         if (targetType === 'montage') {
             const mode = (localStorage.getItem('smMode') || 'auto');
             _updateMontageSubmitLabel(mode);
+            _onSmBrollSrcChange(localStorage.getItem('smSmartBrollSrc') || 'ai');
+            
+            // Восстанавливаем сохраненную модель, если она есть
+            const savedGenModel = localStorage.getItem('smSmartGenModel');
+            const modelSel = document.getElementById('gm-sm-gen-model');
+            if (savedGenModel && modelSel && modelSel.querySelector(`option[value="${savedGenModel}"]`)) {
+                modelSel.value = savedGenModel;
+            }
         } else {
             submitBtn.innerHTML = '<i class="fas fa-bolt"></i> Сгенерировать';
         }
@@ -1462,10 +1470,39 @@ function _onSmServiceChange(svc) {
 function _onSmBrollSrcChange(src) {
     // Когда источник — не встроенный AI Submagic, clip_duration ограничен 8c (Veo) или 10c (Pexels)
     const clipDurSel = document.getElementById('gm-sm-clip-dur');
-    if (!clipDurSel) return;
-    if (src === 'veo') {
+    if (clipDurSel && src === 'veo') {
         // Veo генерирует ровно 8c — зафиксируем ближайший вариант
         clipDurSel.value = '7';
+    }
+
+    const modelRow = document.getElementById('gm-sm-gen-model-row');
+    const modelSel = document.getElementById('gm-sm-gen-model');
+    if (modelRow && modelSel) {
+        if (src === 'veo' || src === 'runway') {
+            modelRow.style.display = '';
+            const currentVal = modelSel.value;
+            modelSel.innerHTML = '';
+            if (src === 'veo') {
+                modelSel.innerHTML = `
+                    <option value="veo-3.1-generate-preview">Veo 3.1 (Preview)</option>
+                    <option value="veo-3.0-generate-001">Veo 3.0</option>
+                `;
+            } else if (src === 'runway') {
+                modelSel.innerHTML = `
+                    <option value="gen4.5">Gen-4.5</option>
+                    <option value="gen3a_turbo">Gen-3 Alpha Turbo</option>
+                `;
+            }
+            // Restore selection if valid
+            const options = Array.from(modelSel.options).map(o => o.value);
+            if (options.includes(currentVal)) {
+                modelSel.value = currentVal;
+            } else {
+                modelSel.value = options[0];
+            }
+        } else {
+            modelRow.style.display = 'none';
+        }
     }
 }
 
@@ -1665,6 +1702,7 @@ function _buildModalForm(type) {
         const savedExtra      = _ls('smSmartExtra', '');
         const savedLlm        = _ls('smSmartLlm', 'gemini-flash-latest');
         const savedBrollSrc   = _ls('smSmartBrollSrc', 'ai');
+        const savedGenModel   = _ls('smSmartGenModel', 'gen4.5');
 
         const templateList = _submagicTemplates.length > 0 ? _submagicTemplates : [
             'Hormozi 2','Hormozi 1','Hormozi 3','Hormozi 4','Hormozi 5',
@@ -1801,6 +1839,14 @@ function _buildModalForm(type) {
                     <option value="pexels_pixabay" ${savedBrollSrc==='pexels_pixabay'?'selected':''}>Pexels + Pixabay (каскад)</option>
                     <option value="veo"           ${savedBrollSrc==='veo'?'selected':''}>Google Veo (ИИ-генерация)</option>
                     <option value="runway"        ${savedBrollSrc==='runway'?'selected':''}>Runway (ИИ-генерация)</option>
+                </select>
+            </div>
+            <div class="gm-row" id="gm-sm-gen-model-row" style="display:none">
+                <label class="gm-label">Модель генерации B-roll
+                    <span class="gm-hint-icon" data-tooltip="Выберите модель для ИИ-генерации (Veo или Runway).">?</span>
+                </label>
+                <select id="gm-sm-gen-model" class="gm-select">
+                    <!-- Заполняется динамически через JS -->
                 </select>
             </div>
             <div class="gm-row gm-row--2">
@@ -2248,6 +2294,7 @@ function _collectModalParams(type) {
                 magic_brolls: false,
                 magic_brolls_pct: 0,
                 broll_source:  g('gm-sm-broll-src')?.value || 'ai',
+                broll_generator_model: g('gm-sm-gen-model')?.value || null,
                 density:       g('gm-sm-density')?.value || 'medium',
                 clip_duration: parseInt(g('gm-sm-clip-dur')?.value || '5'),
                 topic_hint:    g('gm-sm-topic')?.value || 'auto',
@@ -2326,6 +2373,7 @@ function _saveModalParams(type, params) {
         localStorage.setItem('smCleanAudio',   params.clean_audio ? 'true' : 'false');
         if (params.mode === 'smart') {
             localStorage.setItem('smSmartBrollSrc', params.broll_source || 'ai');
+            if (params.broll_generator_model) localStorage.setItem('smSmartGenModel', params.broll_generator_model);
             localStorage.setItem('smSmartDensity', params.density || 'medium');
             localStorage.setItem('smSmartClipDur', String(params.clip_duration || 5));
             localStorage.setItem('smSmartTopic',   params.topic_hint || 'auto');

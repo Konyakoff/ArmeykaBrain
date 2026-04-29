@@ -466,6 +466,13 @@ async def generate_montage_node(queue: asyncio.Queue, slug: str,
         except Exception:
             parent_stats = {}
 
+    parent_params = parent.get("params_json") or {}
+    if isinstance(parent_params, str):
+        try:
+            parent_params = json.loads(parent_params)
+        except Exception:
+            parent_params = {}
+
     title = _next_title(slug, parent_node_id, "montage")
     node = ResultNode(
         slug=slug,
@@ -490,13 +497,13 @@ async def generate_montage_node(queue: asyncio.Queue, slug: str,
             stats, download_url = await _run_creatomate_montage(
                 queue=queue, slug=slug, title=title,
                 video_url=video_url, parent=parent,
-                parent_stats=parent_stats, params=params,
+                parent_stats=parent_stats, parent_params=parent_params, params=params,
             )
         else:
             stats, download_url = await _run_submagic_montage(
                 queue=queue, slug=slug, title=title,
                 video_url=video_url, parent=parent,
-                parent_stats=parent_stats, params=params,
+                parent_stats=parent_stats, parent_params=parent_params, params=params,
             )
 
         node.status = "completed"
@@ -522,7 +529,8 @@ async def generate_montage_node(queue: asyncio.Queue, slug: str,
 # Submagic montage runner
 # ──────────────────────────────────────────────────────────────────────────────
 
-async def _run_submagic_montage(*, queue, slug, title, video_url, parent, parent_stats, params) -> tuple[dict, str]:
+async def _run_submagic_montage(*, queue, slug, title, video_url, parent, parent_stats, parent_params=None, params) -> tuple[dict, str]:
+    parent_params = parent_params or {}
     mode = (params.get("mode") or "auto").lower()
     if mode not in {"auto", "smart"}:
         mode = "auto"
@@ -575,11 +583,21 @@ async def _run_submagic_montage(*, queue, slug, title, video_url, parent, parent
                 "message": f"Поиск/генерация {len(broll_plan)} B-roll клипов через {broll_source}..."
             })
 
-            provider = get_provider(broll_source)
-            parent_video_format = parent_stats.get("video_format", "9:16")
+            broll_generator_model = params.get("broll_generator_model")
+            provider = get_provider(broll_source, broll_generator_model)
+            parent_video_format = (
+                parent_params.get("video_format")
+                or parent_stats.get("video_format")
+                or "9:16"
+            )
             orientation = (
                 "portrait" if parent_video_format in ("9:16", "4:5")
                 else ("square" if parent_video_format == "1:1" else "landscape")
+            )
+            logger.info(
+                f"Submagic ext B-roll: provider={provider.name}, "
+                f"video_format={parent_video_format}, orientation={orientation}, "
+                f"plan_count={len(broll_plan)}"
             )
             concurrency = 1 if provider.kind == "ai" else 3
             sem = asyncio.Semaphore(concurrency)
@@ -627,31 +645,33 @@ async def _run_submagic_montage(*, queue, slug, title, video_url, parent, parent
 
                 # Шаг 3: ждём пока медиа будут готовы (Submagic загружает их асинхронно)
                 await queue.put({"step": 6, "message": "Ожидание обработки медиа в Submagic..."})
-                valid_ids = []
-                for mid in media_ids:
+                valid_ids: list[str] = []
+                clips_for_id: dict[str, dict] = {}
+                for mid, clip in zip(media_ids, ext_clips):
                     if isinstance(mid, Exception):
                         logger.warning(f"upload_user_media error: {mid}")
                         fetch_errors.append(str(mid)[:80])
                         continue
                     valid_ids.append(mid)
+                    clips_for_id[mid] = clip
 
-                ready_ids = []
-                for mid in valid_ids:
-                    ok = await submagic_service.wait_for_user_media(mid, max_wait_sec=90)
-                    if ok:
-                        ready_ids.append(mid)
-                    else:
-                        logger.warning(f"Submagic: media {mid} не готово за 90 с, пропускаем")
+                ready_set = await submagic_service.wait_for_user_media_batch(
+                    valid_ids, max_wait_sec=120, poll_interval=3,
+                )
+                ready_ids = [mid for mid in valid_ids if mid in ready_set]
+                if len(ready_ids) < len(valid_ids):
+                    missed = len(valid_ids) - len(ready_ids)
+                    logger.warning(f"Submagic: {missed} из {len(valid_ids)} медиа не готовы за 120с")
+                    fetch_errors.append(f"Submagic не обработал {missed} клипов вовремя")
 
-                # Шаг 4: строим items[] для Submagic в формате user-media
+                # Шаг 4: строим items[] для Submagic в формате user-media,
+                # сохраняя точное соответствие clip ↔ userMediaId.
                 if ready_ids:
                     smart_items = []
-                    id_iter = iter(ready_ids)
-                    for clip in ext_clips:
-                        try:
-                            mid = next(id_iter)
-                        except StopIteration:
-                            break
+                    for mid in ready_ids:
+                        clip = clips_for_id.get(mid)
+                        if not clip:
+                            continue
                         smart_items.append({
                             "type": "user-media",
                             "startTime": round(clip["start"], 2),
@@ -659,6 +679,7 @@ async def _run_submagic_montage(*, queue, slug, title, video_url, parent, parent
                             "userMediaId": mid,
                             "layout": layout_sm,
                         })
+                    smart_items.sort(key=lambda x: x["startTime"])
                     logger.info(f"Submagic ext B-roll: {len(smart_items)} user-media items готово")
                     smart_stats = {
                         "broll_source": broll_source,
@@ -816,7 +837,8 @@ async def _run_submagic_montage(*, queue, slug, title, video_url, parent, parent
 # Creatomate montage runner
 # ──────────────────────────────────────────────────────────────────────────────
 
-async def _run_creatomate_montage(*, queue, slug, title, video_url, parent, parent_stats, params) -> tuple[dict, str]:
+async def _run_creatomate_montage(*, queue, slug, title, video_url, parent, parent_stats, parent_params=None, params) -> tuple[dict, str]:
+    parent_params = parent_params or {}
     """
     Запускает Creatomate-рендер. Параметры из params:
       video_format ('9:16'/'16:9'/'1:1'/'4:5'), fps, subtitle_preset,

@@ -154,7 +154,11 @@ async def upload_user_media(url: str) -> str:
 
 
 async def list_user_media(media_type: str = "VIDEO", limit: int = 50) -> list[dict]:
-    """Fetch user media list (single page). Returns items array."""
+    """Fetch user media list (single page). Returns array of media items.
+
+    Submagic response shape: {"data": [{"id": "...", "type": "VIDEO", ...}, ...]}
+    Each item exposes "id" (== userMediaId returned by upload_user_media).
+    """
     params = {"type": media_type, "limit": limit}
     async with aiohttp.ClientSession() as session:
         async with session.get(
@@ -164,31 +168,81 @@ async def list_user_media(media_type: str = "VIDEO", limit: int = 50) -> list[di
             if resp.status != 200:
                 error_msg = data.get("message") or data.get("error") or str(data)
                 raise Exception(f"Submagic list_user_media error ({resp.status}): {error_msg}")
-            return data.get("items", [])
+            return data.get("data") or data.get("items") or []
 
 
 async def wait_for_user_media(
     media_id: str,
     max_wait_sec: int = 120,
-    poll_interval: int = 5,
+    poll_interval: int = 3,
 ) -> bool:
     """Poll until the uploaded media appears in the library (ready to use).
 
     Returns True if ready, False if timeout reached.
     Submagic downloads and processes the URL asynchronously — we need to wait
     until the media ID appears in the list before referencing it in a project.
+
+    Match attempts use both "id" and "userMediaId" for forward-compatibility
+    with possible Submagic API variations.
     """
     import asyncio
     elapsed = 0
     while elapsed < max_wait_sec:
-        await asyncio.sleep(poll_interval)
-        elapsed += poll_interval
         try:
-            items = await list_user_media()
-            if any(item.get("id") == media_id for item in items):
+            items = await list_user_media(limit=100)
+            if any(
+                (it.get("id") == media_id) or (it.get("userMediaId") == media_id)
+                for it in items
+            ):
                 logger.info(f"Submagic user media ready: id={media_id} (после {elapsed}с)")
                 return True
         except Exception as e:
             logger.warning(f"Submagic wait_for_user_media poll error: {e}")
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
     logger.warning(f"Submagic user media timeout: id={media_id} не появился за {max_wait_sec}с")
     return False
+
+
+async def wait_for_user_media_batch(
+    media_ids: list[str],
+    max_wait_sec: int = 120,
+    poll_interval: int = 3,
+) -> set[str]:
+    """Wait for several user-media IDs at once. Returns set of IDs that became ready.
+
+    Single shared list_user_media() call per polling tick — much more efficient
+    than waiting for IDs sequentially.
+    """
+    import asyncio
+    pending = set(media_ids)
+    ready: set[str] = set()
+    elapsed = 0
+    while pending and elapsed < max_wait_sec:
+        try:
+            items = await list_user_media(limit=100)
+            present = {
+                it.get("id") for it in items if it.get("id")
+            } | {
+                it.get("userMediaId") for it in items if it.get("userMediaId")
+            }
+            newly_ready = pending & present
+            if newly_ready:
+                ready |= newly_ready
+                pending -= newly_ready
+                logger.info(
+                    f"Submagic user media ready: {len(newly_ready)} of {len(media_ids)} "
+                    f"(всего {len(ready)}, осталось {len(pending)}, t={elapsed}с)"
+                )
+        except Exception as e:
+            logger.warning(f"Submagic wait_for_user_media_batch poll error: {e}")
+        if not pending:
+            break
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+    if pending:
+        logger.warning(
+            f"Submagic user media batch timeout: {len(pending)} ID не появились "
+            f"за {max_wait_sec}с: {list(pending)[:3]}..."
+        )
+    return ready
