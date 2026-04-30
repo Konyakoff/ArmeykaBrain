@@ -80,7 +80,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/tree.js?v=6.3"></script>
+<script defer src="/static/js/tree.js?v=6.4"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => loadResult());
 
@@ -137,8 +137,8 @@ async function loadResult() {
         document.getElementById('success-state').classList.remove('hidden');
         document.getElementById('success-state').classList.add('flex');
 
-        // Инициализируем дерево (голоса/аватары загружаются внутри)
-        await initResultTree(slug);
+        // Передаём уже загруженные данные дерева, избегая повторного fetch
+        await initResultTree(slug, data);
 
     } catch (e) {
         document.getElementById('loading-state').classList.add('hidden');

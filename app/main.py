@@ -11,7 +11,9 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,6 +40,8 @@ app = FastAPI(title="ArmeykaBrain API")
 app.add_exception_handler(APIError, api_error_handler)
 app.add_exception_handler(Exception, global_exception_handler)
 
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -46,7 +50,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+
+class CachedStaticFiles(StaticFiles):
+    """StaticFiles with aggressive Cache-Control for versioned assets."""
+
+    async def get_response(self, path: str, scope) -> Response:
+        resp = await super().get_response(path, scope)
+        if resp.status_code == 200:
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return resp
+
+
+app.mount("/static", CachedStaticFiles(directory="static"), name="static")
 
 
 @app.on_event("startup")

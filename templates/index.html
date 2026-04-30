@@ -739,6 +739,37 @@
         <span class="splatter-icon-outline"><i class="fas fa-history"></i></span>
         История запросов
     </h2>
+
+    <!-- Filter row 1: tab type -->
+    <div class="flex flex-wrap gap-2 mb-3" id="history-filter-tab">
+        <button class="history-filter-btn active" data-tab="all" onclick="setHistoryFilterTab('all')">Все</button>
+        <button class="history-filter-btn" data-tab="text" onclick="setHistoryFilterTab('text')">
+            <i class="fas fa-align-left mr-1"></i>Текст
+        </button>
+        <button class="history-filter-btn" data-tab="audio" onclick="setHistoryFilterTab('audio')">
+            <i class="fas fa-headphones mr-1"></i>Аудио
+        </button>
+        <button class="history-filter-btn" data-tab="video" onclick="setHistoryFilterTab('video')">
+            <i class="fas fa-video mr-1"></i>Видео
+        </button>
+    </div>
+
+    <!-- Filter row 2: has child types (multi-select) -->
+    <div class="flex flex-wrap gap-2 mb-5" id="history-filter-has">
+        <button class="history-filter-btn history-filter-has-btn" data-has="script" onclick="toggleHistoryFilterHas('script')" title="Сценарий">
+            <i class="fas fa-scroll mr-1"></i>Сценарий
+        </button>
+        <button class="history-filter-btn history-filter-has-btn" data-has="audio" onclick="toggleHistoryFilterHas('audio')" title="Аудио">
+            <i class="fas fa-headphones mr-1"></i>Аудио
+        </button>
+        <button class="history-filter-btn history-filter-has-btn" data-has="video" onclick="toggleHistoryFilterHas('video')" title="Видео">
+            <i class="fas fa-film mr-1"></i>Видео
+        </button>
+        <button class="history-filter-btn history-filter-has-btn" data-has="montage" onclick="toggleHistoryFilterHas('montage')" title="Монтаж">
+            <i class="fas fa-cut mr-1"></i>Монтаж
+        </button>
+    </div>
+
     <div id="history-list" class="flex flex-col gap-4">
         <!-- History items will be inserted here -->
     </div>
@@ -751,5 +782,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/app.js?v=5.1"></script>
+<script defer src="/static/js/app.js?v=5.2"></script>
 {% endblock %}

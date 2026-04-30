@@ -2,7 +2,12 @@
 let currentPrompts = null;
 let allHistory = [];
 let isHistoryExpanded = false;
+let _historyFullLoaded = false;
 let currentTab = 'text';
+
+// History filter state (persisted in localStorage)
+let historyFilterTab = localStorage.getItem('historyFilterTab') || 'all';
+let historyFilterHas = JSON.parse(localStorage.getItem('historyFilterHas') || '[]');
 window.currentSlug = null;
 let currentAbortController = null;
 let tabQuestions = { text: '', audio: '', video: '' };
@@ -92,12 +97,11 @@ function switchTab(tab, initial = false) {
     
     document.getElementById('result-container').classList.add('hidden');
     document.getElementById('result-container').classList.remove('flex');
-    
-    loadHistory();
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
     loadConfig();
+    _applyHistoryFilterUI();
     loadHistory();
     _initStep3PromptSelect();
     
@@ -281,42 +285,122 @@ async function loadConfig() {
 
 async function loadHistory() {
     try {
-        const response = await fetch(`/api/history?tab=${currentTab}`);
+        const response = await fetch('/api/history/all');
         const data = await response.json();
         allHistory = data.history || [];
+        _applyHistoryFilterUI();
         renderHistory();
     } catch (error) {
         console.error('Failed to load history:', error);
     }
 }
 
+// ── filter helpers ────────────────────────────────────────────────────────────
+
+function _applyHistoryFilterUI() {
+    // Restore tab filter buttons
+    document.querySelectorAll('#history-filter-tab .history-filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === historyFilterTab);
+    });
+    // Restore has filter buttons
+    document.querySelectorAll('.history-filter-has-btn').forEach(btn => {
+        btn.classList.toggle('active', historyFilterHas.includes(btn.dataset.has));
+    });
+}
+
+function setHistoryFilterTab(tab) {
+    historyFilterTab = tab;
+    localStorage.setItem('historyFilterTab', tab);
+    _applyHistoryFilterUI();
+    isHistoryExpanded = false;
+    renderHistory();
+}
+
+function toggleHistoryFilterHas(type) {
+    const idx = historyFilterHas.indexOf(type);
+    if (idx === -1) {
+        historyFilterHas.push(type);
+    } else {
+        historyFilterHas.splice(idx, 1);
+    }
+    localStorage.setItem('historyFilterHas', JSON.stringify(historyFilterHas));
+    _applyHistoryFilterUI();
+    isHistoryExpanded = false;
+    renderHistory();
+}
+
+// ── badge helpers ─────────────────────────────────────────────────────────────
+
+const _BADGE_META = {
+    script:  { icon: 'fa-scroll',      title: 'Сценарии' },
+    audio:   { icon: 'fa-headphones',  title: 'Аудио' },
+    video:   { icon: 'fa-film',        title: 'Видео' },
+    montage: { icon: 'fa-cut',         title: 'Монтаж' },
+};
+
+function _buildBadges(counts) {
+    if (!counts) return '';
+    return Object.entries(_BADGE_META)
+        .filter(([k]) => counts[k] > 0)
+        .map(([k, m]) =>
+            `<span class="node-badge" title="${m.title}">` +
+            `<i class="fas ${m.icon}"></i> ${counts[k]}` +
+            `</span>`
+        ).join('');
+}
+
+function _getTabIcon(tab_type) {
+    const icons = { text: 'fa-align-left', audio: 'fa-headphones', video: 'fa-video' };
+    return icons[tab_type] || 'fa-file';
+}
+
+// ── render ────────────────────────────────────────────────────────────────────
+
 function renderHistory() {
     const list = document.getElementById('history-list');
     const btn = document.getElementById('show-more-history');
     list.innerHTML = '';
-    
-    if (allHistory.length === 0) {
+
+    // Apply filters
+    let filtered = allHistory;
+    if (historyFilterTab !== 'all') {
+        filtered = filtered.filter(item => item.tab_type === historyFilterTab);
+    }
+    if (historyFilterHas.length > 0) {
+        filtered = filtered.filter(item =>
+            historyFilterHas.every(type => item.counts && item.counts[type] > 0)
+        );
+    }
+
+    if (filtered.length === 0) {
         list.innerHTML = '<p class="text-gray-500 italic">История пуста</p>';
         btn.classList.add('hidden');
         return;
     }
 
-    const limit = isHistoryExpanded ? allHistory.length : 5;
-    const itemsToShow = allHistory.slice(0, limit);
-
-    itemsToShow.forEach(item => {
+    const limit = isHistoryExpanded ? filtered.length : 5;
+    filtered.slice(0, limit).forEach(item => {
         const div = document.createElement('div');
         div.className = 'bg-white rounded-xl shadow-sm p-4 border border-gray-100 hover:border-brand-main transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3';
-        
-        const shortQuestion = item.question.length > 80 ? item.question.substring(0, 80) + '...' : item.question;
-        
+
+        const shortQuestion = item.question.length > 80
+            ? item.question.substring(0, 80) + '…'
+            : item.question;
+        const badges = _buildBadges(item.counts);
+        const tabIcon = _getTabIcon(item.tab_type);
+
         div.innerHTML = `
-            <div class="flex-1">
+            <div class="flex-1 min-w-0">
                 <p class="text-brand-dark font-medium">${shortQuestion}</p>
-                <p class="text-xs text-gray-400 mt-1"><i class="far fa-clock mr-1"></i> ${item.timestamp}</p>
+                <p class="text-xs text-gray-400 mt-1">
+                    <i class="fas ${tabIcon} mr-1"></i>${item.tab_type || 'text'}
+                    <i class="far fa-clock ml-3 mr-1"></i>${item.timestamp}
+                </p>
             </div>
-            <div class="flex-shrink-0">
-                <a href="/text/${item.slug}" target="_blank" class="text-sm bg-brand-lightBg text-brand-main border border-brand-inputBorder hover:bg-brand-main hover:text-white px-4 py-2 rounded-lg font-semibold transition-all">
+            <div class="flex-shrink-0 flex items-center gap-2 flex-wrap justify-end">
+                ${badges ? `<div class="flex items-center gap-1">${badges}</div>` : ''}
+                <a href="/text/${item.slug}" target="_blank"
+                   class="text-sm bg-brand-lightBg text-brand-main border border-brand-inputBorder hover:bg-brand-main hover:text-white px-4 py-2 rounded-lg font-semibold transition-all whitespace-nowrap">
                     /text/${item.slug}
                 </a>
             </div>
@@ -324,16 +408,26 @@ function renderHistory() {
         list.appendChild(div);
     });
 
-    if (allHistory.length > 5) {
+    if (filtered.length > 5) {
         btn.classList.remove('hidden');
-        btn.innerHTML = isHistoryExpanded ? '<i class="fas fa-chevron-up mr-1"></i> Скрыть' : '<i class="fas fa-chevron-down mr-1"></i> Показать все';
+        btn.innerHTML = isHistoryExpanded
+            ? '<i class="fas fa-chevron-up mr-1"></i> Скрыть'
+            : '<i class="fas fa-chevron-down mr-1"></i> Показать все';
     } else {
         btn.classList.add('hidden');
     }
 }
 
-function toggleHistory() {
+async function toggleHistory() {
     isHistoryExpanded = !isHistoryExpanded;
+    if (isHistoryExpanded && !_historyFullLoaded) {
+        try {
+            const response = await fetch('/api/history/all?limit=200');
+            const data = await response.json();
+            allHistory = data.history || [];
+            _historyFullLoaded = true;
+        } catch (e) { console.error('Failed to load full history:', e); }
+    }
     renderHistory();
 }
 
@@ -777,13 +871,7 @@ async function sendQuery() {
             document.getElementById('result-link-text').textContent = fullUrl;
             resultLinkContainer.classList.remove('hidden');
             
-            allHistory.unshift({
-                slug: data.slug,
-                question: question,
-                timestamp: new Date().toLocaleString('ru-RU').replace(',', ''),
-                char_count: data.answer.length
-            });
-            renderHistory();
+            loadHistory();
         } else {
             resultLinkContainer.classList.add('hidden');
         }
@@ -1073,9 +1161,7 @@ function peAskPassword(title, desc, needName = false) {
 async function peInitEditor() {
     peLoad();
     try {
-        const res = await fetch('/api/prompts');
-        const data = await res.json();
-        promptEditor.originals = data.prompts || {};
+        promptEditor.originals = await _fetchPromptsOnce();
     } catch (e) {
         console.error('Не удалось загрузить промпты', e);
     }
@@ -1209,7 +1295,7 @@ function peInitUI() {
                 const sk = peGetSessionKey();
                 delete promptEditor.session[sk];
                 peSave();
-                _promptsCache = null; // сбрасываем кэш для просмотра
+                _promptsCache = null; _promptsFetchPromise = null;
                 peSetStatusMsg('Перезаписано на диск ✓');
             } else {
                 peSetStatusMsg(data.error || 'Ошибка сохранения', true);
@@ -1253,7 +1339,7 @@ function peInitUI() {
                 promptEditor.activeStyleKey = result.name;
                 peUpdateTabStyle();
                 peRenderEditor();
-                _promptsCache = null; // сбрасываем кэш для просмотра
+                _promptsCache = null; _promptsFetchPromise = null;
                 peSetStatusMsg(`Промпт «${result.name}» создан ✓`);
             } else {
                 peSetStatusMsg(data.error || 'Ошибка создания', true);
@@ -1366,9 +1452,8 @@ async function _initStep3PromptSelect() {
     const sel = document.getElementById('step3-prompt-select');
     if (!sel) return;
     try {
-        const res = await fetch('/api/prompts');
-        const data = await res.json();
-        const step3 = (data.prompts || {})['step3'] || {};
+        const prompts = await _fetchPromptsOnce();
+        const step3 = (prompts || {})['step3'] || {};
         if (!Object.keys(step3).length) return;
 
         const saved = localStorage.getItem('pe_step3_key') || 'yur_bud_svoboden';
@@ -1434,9 +1519,23 @@ function _pollTimecodes(slug) {
     }, 8000);
 }
 
-// ──── Просмотр промптов ───────────────────────────────────────
+// ──── Shared prompts fetch (deduplicated) ─────────────────────
 
 let _promptsCache = null;
+let _promptsFetchPromise = null;
+
+async function _fetchPromptsOnce(force = false) {
+    if (!force && _promptsCache) return _promptsCache;
+    if (!force && _promptsFetchPromise) return _promptsFetchPromise;
+    _promptsFetchPromise = fetch('/api/prompts').then(r => r.json()).then(d => {
+        _promptsCache = d.prompts || {};
+        _promptsFetchPromise = null;
+        return _promptsCache;
+    });
+    return _promptsFetchPromise;
+}
+
+// ──── Просмотр промптов ───────────────────────────────────────
 
 async function openPromptPreview(group, key) {
     if (!key) return;
@@ -1452,9 +1551,7 @@ async function openPromptPreview(group, key) {
 
     try {
         if (!_promptsCache) {
-            const res = await fetch('/api/prompts');
-            const data = await res.json();
-            _promptsCache = data.prompts || {};
+            await _fetchPromptsOnce();
         }
         const text = (_promptsCache[group] || {})[key];
         textEl.textContent = text != null ? text : '(промпт не найден)';

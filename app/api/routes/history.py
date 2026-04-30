@@ -6,8 +6,14 @@ from fastapi import APIRouter
 
 from app.core.exceptions import NotFoundError
 from app.db.database import get_recent_results, get_result_by_slug
+from app.db.repos.saved_result_repo import get_all_with_counts
 
 router = APIRouter(prefix="/api", tags=["history"])
+
+
+@router.get("/history/all")
+async def get_history_all(limit: int = 20):
+    return {"history": get_all_with_counts(limit)}
 
 
 @router.get("/history")

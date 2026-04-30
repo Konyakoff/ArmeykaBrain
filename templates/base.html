@@ -6,13 +6,16 @@
     <title>{% block title %}ArmeykaBrain - ИИ Юрист{% endblock %}</title>
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
     
-    <!-- Google Fonts -->
+    <!-- Google Fonts (non-blocking via media swap) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&family=Onest:wght@700;800&display=swap" rel="stylesheet">
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&family=Onest:wght@700;800&display=swap">
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&family=Onest:wght@700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
     
-    <!-- FontAwesome Icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- FontAwesome Icons (only solid + regular, not all) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/fontawesome.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/solid.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/regular.min.css">
     
     <!-- TailwindCSS via CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -43,10 +46,10 @@
         }
     </script>
     
-    <!-- Marked.js for Markdown parsing -->
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Marked.js for Markdown parsing (defer to not block first paint) -->
+    <script defer src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     
-    <link rel="stylesheet" href="/static/css/style.css?v=4.5">
+    <link rel="stylesheet" href="/static/css/style.css?v=4.6">
     <!-- Avatar modal: все стили карточек задаются inline через JS (ui.js).
          Здесь ничего не определяем, чтобы исключить конфликты с Tailwind CDN. -->
     {% block extra_head %}{% endblock %}
@@ -62,7 +65,7 @@
             <div class="mb-6 md:mb-0">
                 <a href="/" class="text-4xl sm:text-5xl font-black text-brand-dark tracking-tighter uppercase flex items-center flex-wrap gap-2 hover:opacity-90 transition-opacity">
                     АРМЕЙКА
-                    <img src="/static/img/star_rounded.png" alt="*" class="w-8 h-8 sm:w-10 sm:h-10 animate-[pulse_2s_ease-in-out_infinite]" />
+                    <img src="/static/img/star_rounded.webp" alt="*" class="w-8 h-8 sm:w-10 sm:h-10 animate-[pulse_2s_ease-in-out_infinite]" width="40" height="40" loading="eager" />
                     NET <span class="normal-case text-3xl sm:text-4xl ml-1 text-gray-700">Brain</span>
                 </a>
                 <p class="text-gray-500 text-base sm:text-lg mt-2 font-medium tracking-wide">{% block subtitle %}ИИ-штаб маркетинга{% endblock %}</p>
@@ -102,8 +105,8 @@
         </div>
     </div>
 
-    <script src="/static/js/ui.js?v=4.4"></script>
-    <script src="/static/js/api.js?v=4.0"></script>
+    <script defer src="/static/js/ui.js?v=4.4"></script>
+    <script defer src="/static/js/api.js?v=4.0"></script>
     <script>document.addEventListener('DOMContentLoaded', initCacheStatus);</script>
     {% block scripts %}{% endblock %}
 </body>

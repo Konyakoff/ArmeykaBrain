@@ -41,10 +41,22 @@ class ResultTree {
     }
 
     /* ── Инициализация ──────────────────────────────────────────────────── */
-    async init(container) {
+    async init(container, preloadedData) {
         this.container = container;
         this._loadExpanded();
-        await this.load();
+        if (preloadedData) {
+            this._applyTreeData(preloadedData);
+        } else {
+            await this.load();
+        }
+    }
+
+    _applyTreeData(data) {
+        this.nodesMap.clear();
+        data.nodes.forEach(n => this.nodesMap.set(n.node_id, n));
+        this._autoExpand();
+        this.render();
+        this._startPollingProcessing();
     }
 
     async load() {
@@ -52,11 +64,7 @@ class ResultTree {
             const r = await fetch(`/api/tree/${this.slug}`);
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             const data = await r.json();
-            this.nodesMap.clear();
-            data.nodes.forEach(n => this.nodesMap.set(n.node_id, n));
-            this._autoExpand();
-            this.render();
-            this._startPollingProcessing();
+            this._applyTreeData(data);
         } catch (e) {
             console.error('Tree load error:', e);
             if (this.container) {
@@ -2553,34 +2561,30 @@ function _fmtNodeDate(isoStr) {
    ИНИЦИАЛИЗАЦИЯ (вызывается из result.html)
    ══════════════════════════════════════════════════════════════════════════ */
 
-async function initResultTree(slug) {
+async function initResultTree(slug, preloadedTreeData) {
     const container = document.getElementById('result-tree');
     if (!container) return;
 
-    // Загружаем голоса, аватары и step3-промпты (нужны для модального окна генерации)
-    try {
-        const cfg = await fetch('/api/config').then(r => r.json());
-        _treeVoices  = cfg.voices  || [];
-        _treeAvatars = cfg.avatars || [];
-        _treeModels  = cfg.models  || [];
-        if (typeof windowAvatars !== 'undefined')        windowAvatars        = _treeAvatars;
-        if (typeof windowPrivateAvatars !== 'undefined') windowPrivateAvatars = cfg.private_avatars || [];
-    } catch (e) { console.warn('Не удалось загрузить config:', e); }
+    const [cfg, pm, sm] = await Promise.all([
+        fetch('/api/config').then(r => r.json()).catch(e => { console.warn('config:', e); return {}; }),
+        fetch('/api/prompts').then(r => r.json()).catch(e => { console.warn('prompts:', e); return {}; }),
+        fetch('/api/submagic/templates').then(r => r.json()).catch(e => { console.warn('submagic:', e); return {}; }),
+    ]);
 
-    try {
-        const pm = await fetch('/api/prompts').then(r => r.json());
-        const HIDDEN_KEYS = new Set(['v1', 'v2', 'evaluation']);
-        _treeStep3Prompts = Object.fromEntries(
-            Object.entries(pm.prompts?.step3 || {}).filter(([k]) => !HIDDEN_KEYS.has(k))
-        );
-    } catch (e) { console.warn('Не удалось загрузить промпты:', e); }
+    _treeVoices  = cfg.voices  || [];
+    _treeAvatars = cfg.avatars || [];
+    _treeModels  = cfg.models  || [];
+    if (typeof windowAvatars !== 'undefined')        windowAvatars        = _treeAvatars;
+    if (typeof windowPrivateAvatars !== 'undefined') windowPrivateAvatars = cfg.private_avatars || [];
 
-    try {
-        const sm = await fetch('/api/submagic/templates').then(r => r.json());
-        _submagicTemplates = sm.templates || [];
-    } catch (e) { console.warn('Не удалось загрузить Submagic шаблоны:', e); }
+    const HIDDEN_KEYS = new Set(['v1', 'v2', 'evaluation']);
+    _treeStep3Prompts = Object.fromEntries(
+        Object.entries(pm.prompts?.step3 || {}).filter(([k]) => !HIDDEN_KEYS.has(k))
+    );
+
+    _submagicTemplates = sm.templates || [];
 
     _tree = new ResultTree(slug);
     window._tree = _tree;
-    await _tree.init(container);
+    await _tree.init(container, preloadedTreeData);
 }

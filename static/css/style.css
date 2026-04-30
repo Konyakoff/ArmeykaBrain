@@ -1537,3 +1537,51 @@ textarea::-webkit-scrollbar-thumb:hover { background: #F47920; }
     background: linear-gradient(to right, #e5e7eb 0%, #e5e7eb 70%, transparent 100%);
     border-radius: 1px;
 }
+
+/* ── History filters ──────────────────────────────────────────────────────── */
+
+.history-filter-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 14px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+    border: 1.5px solid #e5e7eb;
+    background: #fff;
+    color: #6b7280;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+    white-space: nowrap;
+    line-height: 1.4;
+}
+
+.history-filter-btn:hover {
+    border-color: #F47920;
+    color: #F47920;
+    background: #fdf9f6;
+}
+
+.history-filter-btn.active {
+    background: #F47920;
+    color: #fff;
+    border-color: #F47920;
+    box-shadow: 0 2px 8px rgba(244, 121, 32, 0.25);
+}
+
+/* ── Node type badges on history cards ───────────────────────────────────── */
+
+.node-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    background: #fdf9f6;
+    color: #F47920;
+    border: 1px solid #f0dfd1;
+    white-space: nowrap;
+}
