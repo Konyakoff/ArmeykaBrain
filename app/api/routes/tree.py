@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 import asyncio
 import logging
+import re
 
-from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Query
+from fastapi.responses import JSONResponse, Response
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.exceptions import NotFoundError, ValidationError
@@ -165,3 +166,42 @@ async def stream_tree_node(node_id: str):
             active_streams.pop(node_id, None)
 
     return EventSourceResponse(generator())
+
+
+@router.get("/node/{node_id}/export")
+async def export_article_node(
+    node_id: str,
+    fmt: str = Query("html", pattern="^(html|docx|pdf)$"),
+):
+    """Скачать экспертную статью в HTML / DOCX / PDF."""
+    from app.services.article_export import export_article
+
+    node = get_tree_node(node_id)
+    if not node:
+        raise NotFoundError("Узел не найден")
+    if node.get("node_type") != "article":
+        raise ValidationError("Экспорт доступен только для статей")
+    md_text = node.get("content_text") or ""
+    if not md_text:
+        raise ValidationError("Статья пуста")
+
+    title = node.get("title") or "Экспертная статья"
+    safe_name = re.sub(r'[^\w\s-]', '', title)[:60].strip() or "article"
+    safe_name = re.sub(r'\s+', '_', safe_name)
+
+    data, content_type, ext = export_article(title, md_text, fmt)
+
+    from urllib.parse import quote
+    ascii_name = f"article{ext}"
+    utf8_name = quote(f"{safe_name}{ext}")
+
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=\"{ascii_name}\"; "
+                f"filename*=UTF-8''{utf8_name}"
+            ),
+        },
+    )

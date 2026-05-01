@@ -4,7 +4,22 @@ __pycache__/
 .env
 db/
 data/
-static/audio/
 .cursor/
 *.db
 *.sqlite3
+
+# Generated media (heavy, not part of codebase)
+static/audio/
+static/broll/
+static/img/avatars/
+static/video/
+static/montage/
+
+# Large binary formats
+*.mp3
+*.mp4
+*.wav
+*.webm
+*.mov
+*.avi
+*.mkv

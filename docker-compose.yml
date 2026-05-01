@@ -11,3 +11,4 @@ services:
       - .env
     volumes:
       - ./:/app
+      - /mnt/data:/mnt/data

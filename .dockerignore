@@ -1,0 +1,10 @@
+.git
+__pycache__
+*.pyc
+.env
+*.db
+node_modules
+.venv
+venv
+.cursor
+agent-transcripts
